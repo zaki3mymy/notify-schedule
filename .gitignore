@@ -6,6 +6,9 @@
 *.out
 coverage.*
 
+# direnv（nix develop のキャッシュ）
+.direnv/
+
 # IDE・OS
 .idea/
 .vscode/
