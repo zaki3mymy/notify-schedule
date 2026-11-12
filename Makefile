@@ -5,7 +5,8 @@
 
 .DEFAULT_GOAL := help
 
-APP := ./bin/notify-schedule
+APP      := ./bin/notify-schedule
+COVERAGE := coverage.out
 
 .PHONY: help
 help: ## ターゲットの一覧を出す
@@ -17,8 +18,13 @@ build: ## アプリをビルドする（bin/notify-schedule）
 	go build -trimpath -o $(APP) ./cmd/notify-schedule
 
 .PHONY: test
-test: ## テストを実行する
-	go test -race ./...
+test: ## テストを実行し、カバレッジを coverage.out に書く（最後に全体のカバレッジを出す）
+	go test -race -coverprofile=$(COVERAGE) ./...
+	@go tool cover -func=$(COVERAGE) | tail -n 1
+
+.PHONY: cover-html
+cover-html: ## カバレッジを HTML にする（coverage.html。make test のあとに実行する）
+	go tool cover -html=$(COVERAGE) -o coverage.html
 
 .PHONY: fmt
 fmt: ## コードを整形する（ファイルを書き換える）
