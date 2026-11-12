@@ -41,12 +41,13 @@ make build
 | `make fmt` | コードを整形する（ファイルを書き換える） |
 | `make lint` | 静的解析をする（`go vet`、golangci-lint。整形の崩れと依存の向きも確認する） |
 | `make image` | コンテナイメージをビルドする（`IMAGE` で名前、`CONTAINER` で podman・docker を変えられる） |
+| `make image-push IMAGE=...` | コンテナイメージを push する（`IMAGE` は push 先を含めた名前。先に `make image`） |
 | `make tf-fmt` | Terraform を整形する（ファイルを書き換える） |
 | `make tf-lint` | Terraform の整形の崩れと、TFLint の指摘を確認する |
 | `make tf-validate` | Terraform を検証する（backend には接続しない） |
 | `make tf-init ENV=dev TF_STATE_BUCKET=...` | Terraform を初期化する（Google Cloud へのログインが要る） |
 | `make tf-plan ENV=dev GCP_PROJECT_ID=...` | Terraform の plan（先に `tf-init`） |
-| `make tf-apply ENV=dev GCP_PROJECT_ID=...` | Terraform の apply（先に `tf-init`） |
+| `make tf-apply ENV=dev GCP_PROJECT_ID=...` | Terraform の apply（先に `tf-init`。`TF_APPLY_ARGS` でオプションを足せる） |
 | `make secret-update ENV=dev GCP_PROJECT_ID=... FILE=config.yaml` | 設定ファイルを Secret Manager に入れる（[configuration.md](./configuration.md)） |
 | `make tidy` | `go.mod` と `go.sum` を整理する |
 | `make clean` | ビルドの成果物を消す |
@@ -55,7 +56,7 @@ make build
 
 ## CI
 
-PR（`develop`・`main` 向き）と、`develop`・`main` への push で [.github/workflows/ci.yml](../.github/workflows/ci.yml) が動く。
+PR（`develop`・`main` 向き）で [.github/workflows/ci.yml](../.github/workflows/ci.yml) が動く。`develop`・`main` への push では、CD（後述）から同じワークフローが呼ばれる。
 
 - ローカルと同じツールを使うため、flake.nix の devShell の中で make のターゲットを実行する（`nix develop -c make lint` など）。`make lint` だけだと、ランナーにあるツールが使われてしまう。
 - 実行するのは `make lint`・`make test`・`make build`、ワークフローの lint（actionlint）、`make tf-lint`・`make tf-validate`。別のジョブで、コンテナイメージのビルド（`make image`）も確かめる（push はしない）。
@@ -68,6 +69,18 @@ PR（`develop`・`main` 向き）と、`develop`・`main` への push で [.gith
     - GitHub Actions のキャッシュは、作ったブランチと、そのブランチに向いた PR でしか使えない。PR で作ったキャッシュはその PR でしか使えず、リポジトリのキャッシュの容量（10GB。超えると古いものから消える）を埋めるだけになるため。
     - develop のキャッシュは develop 向きの PR で、main のキャッシュは main 向きの PR（リリースの PR）で使われる。
 - PR のタイトルは Conventional Commits の形（`feat: ...`、`fix(cli): ...` など）にする。[.github/workflows/label-pr-by-title.yml](../.github/workflows/label-pr-by-title.yml) がタイトルからラベルを付ける（形が違うときは失敗する）。
+
+## CD
+
+`develop`・`main` への push で [.github/workflows/cd.yml](../.github/workflows/cd.yml) が動き、`develop` は dev、`main` は prod に出す。Actions の画面から手で動かすこともできる（`develop`・`main` のときだけ出す）。
+
+1. CI（`ci.yml`）を呼び、通ったら次に進む。
+2. コンテナイメージをビルドし、Artifact Registry に push する（`make image`・`make image-push`）。
+   - タグはコミットの SHA。タグは上書きできないので、同じコミットのイメージがもうあるときは、ビルドと push を飛ばす。
+3. `make tf-init`・`make tf-apply` で、Terraform を apply する（承認は待たない。差分は PR の plan のコメントで確かめておく）。
+
+- GitHub の Environment（`develop`・`prod`）の secrets で、Workload Identity 連携で認証する。
+- 同じブランチのデプロイは順に行う（途中で取り消さない）。
 
 ## Dependabot
 

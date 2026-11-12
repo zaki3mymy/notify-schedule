@@ -43,6 +43,10 @@ lint: ## 静的解析をする（go vet・整形の崩れ・依存の向きも�
 image: ## コンテナイメージをビルドする（IMAGE で名前を変えられる）
 	$(CONTAINER) build -f Containerfile -t $(IMAGE) .
 
+.PHONY: image-push
+image-push: ## コンテナイメージを push する（IMAGE に push 先を含めた名前を指定する。先に make image）
+	$(CONTAINER) push $(IMAGE)
+
 TF_ENVS := dev prod
 
 .PHONY: tf-fmt
@@ -73,9 +77,9 @@ tf-plan: ## Terraform の plan（ENV・GCP_PROJECT_ID が要る。先に tf-init
 	terraform -chdir=tf/envs/$(ENV) plan -input=false -no-color -var="project_id=$(GCP_PROJECT_ID)"
 
 .PHONY: tf-apply
-tf-apply: ## Terraform の apply（ENV・GCP_PROJECT_ID が要る。先に tf-init）
+tf-apply: ## Terraform の apply（ENV・GCP_PROJECT_ID が要る。先に tf-init。TF_APPLY_ARGS でオプションを足せる）
 	$(call require,ENV GCP_PROJECT_ID)
-	terraform -chdir=tf/envs/$(ENV) apply -input=false -var="project_id=$(GCP_PROJECT_ID)"
+	terraform -chdir=tf/envs/$(ENV) apply -input=false $(TF_APPLY_ARGS) -var="project_id=$(GCP_PROJECT_ID)"
 
 .PHONY: secret-update
 secret-update: ## 設定ファイルを Secret Manager に入れ、古いバージョンを消す（ENV・GCP_PROJECT_ID・FILE が要る）
