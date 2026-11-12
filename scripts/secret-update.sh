@@ -34,14 +34,15 @@ new=${new##*/}
 echo "  バージョン $new を追加しました"
 
 echo "3/4 Cloud Run Job を --dry-run で実行して、実際に動くかを確かめます"
-if gcloud run jobs describe "$JOB" --project="$GCP_PROJECT_ID" --region="$REGION" >/dev/null 2>&1; then
+if describe=$(gcloud run jobs describe "$JOB" --project="$GCP_PROJECT_ID" --region="$REGION" 2>&1); then
   if ! gcloud run jobs execute "$JOB" --project="$GCP_PROJECT_ID" --region="$REGION" --args=--dry-run --wait; then
     echo "--dry-run が失敗したので、追加したバージョン $new を消します（古いバージョンが残ります）" >&2
     gcloud secrets versions destroy "$new" --secret="$SECRET" --project="$GCP_PROJECT_ID" --quiet
     exit 1
   fi
 else
-  echo "  Cloud Run Job がまだないので、飛ばします"
+  echo "  対象の Cloud Run Job（$JOB）が見つからないので、--dry-run での確認を飛ばします" >&2
+  echo "    ${describe//$'\n'/$'\n'    }" >&2
 fi
 
 echo "4/4 古いバージョンを消します"
