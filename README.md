@@ -26,6 +26,7 @@
 
 | ドキュメント | 内容 |
 |---|---|
+| [docs/usage.md](./docs/usage.md) | 使い方（フラグ・終了コード・ログ・手元での実行） |
 | [docs/configuration.md](./docs/configuration.md) | 設定（環境変数と設定ファイル） |
 | [docs/architecture.md](./docs/architecture.md) | ディレクトリ構成と依存の向き |
 | [docs/development.md](./docs/development.md) | 開発環境と、開発で使うコマンド |
