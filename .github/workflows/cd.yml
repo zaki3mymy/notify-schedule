@@ -104,3 +104,10 @@ jobs:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         # Cloud Run Job は、上で push した（またはもうあった）コミットの SHA のタグのイメージで動かす
         run: make tf-apply ENV="$TF_ENV" GCP_PROJECT_ID="$GCP_PROJECT_ID" IMAGE_TAG="$GITHUB_SHA" TF_APPLY_ARGS="-auto-approve -no-color"
+
+      # デプロイした Job を --dry-run で実行する（実際のカレンダーを読み、nandemo-oshirase には dry_run で送る。LINE には送らない）。
+      # gcloud はランナーに入っているものを使う
+      - name: Smoke test
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: make smoke-test GCP_PROJECT_ID="$GCP_PROJECT_ID"
