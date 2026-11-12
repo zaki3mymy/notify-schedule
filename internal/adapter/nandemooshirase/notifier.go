@@ -23,8 +23,9 @@ import (
 // DefaultTimeout は、Config.Timeout を指定しなかったときの、1回のリクエストのタイムアウト。
 const DefaultTimeout = 30 * time.Second
 
-// エラーのときに読むレスポンスの本文の上限（大きな本文でメモリを使いすぎないようにする）
-const maxErrorBody = 64 << 10
+// maxErrorBody は、エラーのときに読むレスポンスの本文の上限（64 KiB）。
+// 大きな本文でメモリを使いすぎないようにする。
+const maxErrorBody = 64 * 1024
 
 // Config は、Notifier の設定。
 type Config struct {
@@ -117,8 +118,6 @@ func (n *Notifier) Notify(ctx context.Context, msgs []domain.Message) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		// 本文は使わないが、接続を使い回せるよう読み切る
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorBody))
 		return nil
 	}
 	return &StatusError{StatusCode: resp.StatusCode, Message: errorMessage(resp.Body)}
