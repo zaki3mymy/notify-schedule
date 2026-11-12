@@ -104,17 +104,20 @@ func ComposeMessages(s DailySchedule) []Message {
 
 // formatEvent は、予定を1行の文字列にする（例: 「09:00-10:00 打ち合わせ（仕事）」）。
 func formatEvent(s DailySchedule, e Event) string {
-	title := e.Title
-	if strings.TrimSpace(title) == "" {
+	title := singleLine(e.Title)
+	if title == "" {
 		title = untitled
 	}
-	// 改行を含むタイトルで行が崩れないようにする
-	title = strings.Join(strings.Fields(title), " ")
 	line := formatTime(s, e) + " " + title
-	if e.CalendarLabel != "" {
-		line += "（" + e.CalendarLabel + "）"
+	if label := singleLine(e.CalendarLabel); label != "" {
+		line += "（" + label + "）"
 	}
 	return line
+}
+
+// singleLine は、改行などの空白をまとめて1つの空白にし、前後の空白を除く（改行を含む文字列で行が崩れないようにする）。
+func singleLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // formatTime は、予定の時刻の部分を返す。
