@@ -15,7 +15,10 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [ "terraform" ];
+        };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -28,6 +31,8 @@
             pre-commit
             # GitHub Actions のワークフローの lint（pre-commit で使う）
             actionlint
+            terraform
+            tflint
           ];
 
           # go.mod の go より新しいツールチェーンを勝手に取得せず、nixpkgs の go を使う

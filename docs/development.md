@@ -11,6 +11,7 @@
 | gnumake | 開発の操作（make のターゲット） |
 | pre-commit | コミット前のチェック |
 | actionlint | GitHub Actions のワークフローの lint |
+| terraform・tflint | インフラ（`tf/`）の管理と lint |
 
 [direnv](https://direnv.net/) を使うと、このディレクトリに入ったときに自動でツールが PATH に入る（[.envrc](../.envrc)）。direnv を使わないときは `nix develop` を実行する。
 
@@ -38,6 +39,11 @@ make build
 | `make fmt` | コードを整形する（ファイルを書き換える） |
 | `make lint` | 静的解析をする（`go vet`、golangci-lint。整形の崩れと依存の向きも確認する） |
 | `make image` | コンテナイメージをビルドする（`IMAGE` で名前、`CONTAINER` で podman・docker を変えられる） |
+| `make tf-fmt` | Terraform を整形する（ファイルを書き換える） |
+| `make tf-lint` | Terraform の整形の崩れと、TFLint の指摘を確認する |
+| `make tf-validate` | Terraform を検証する（backend には接続しない） |
+| `make tf-init ENV=dev TF_STATE_BUCKET=...` | Terraform を初期化する（Google Cloud へのログインが要る） |
+| `make tf-plan ENV=dev GCP_PROJECT_ID=...` | Terraform の plan（先に `tf-init`） |
 | `make tidy` | `go.mod` と `go.sum` を整理する |
 | `make clean` | ビルドの成果物を消す |
 
@@ -48,7 +54,7 @@ make build
 PR（`develop`・`main` 向き）と、`develop`・`main` への push で [.github/workflows/ci.yml](../.github/workflows/ci.yml) が動く。
 
 - ローカルと同じツールを使うため、flake.nix の devShell の中で make のターゲットを実行する（`nix develop -c make lint` など）。`make lint` だけだと、ランナーにあるツールが使われてしまう。
-- 実行するのは `make lint`・`make test`・`make build` と、ワークフローの lint（actionlint）。別のジョブで、コンテナイメージのビルド（`make image`）も確かめる（push はしない）。
+- 実行するのは `make lint`・`make test`・`make build`、ワークフローの lint（actionlint）、`make tf-lint`・`make tf-validate`。別のジョブで、コンテナイメージのビルド（`make image`）も確かめる（push はしない）。
 - カバレッジは、実行結果の画面（ジョブのサマリー）に全体と関数ごとの値を出し、HTML のレポート（`coverage.html`）と `coverage.out` を成果物（`coverage-report`、30日間）に残す。
 - ファズテストは、`go test` ではシード（`f.Add` の入力）だけを実行する。入力を生成して探すときは、手元で `go test -fuzz=<名前> ./<パッケージ>` を実行する。
 - キャッシュ
@@ -66,6 +72,22 @@ PR（`develop`・`main` 向き）と、`develop`・`main` への push で [.gith
 | 対象 | 内容 |
 |---|---|
 | `github-actions` | ワークフローのアクション（SHA で固定したものも、SHA とバージョンのコメントを更新する） |
+| `terraform` | Terraform のプロバイダ（`tf/envs/dev`・`tf/envs/prod`） |
 | `docker` | Containerfile のベースイメージ（ダイジェストも更新する） |
 | `gomod` | Go のモジュール（マイナー・パッチは1つの PR にまとめる） |
 | `nix` | flake.lock の入力（nixpkgs を進めると、開発のツールがまとめて新しくなる） |
+
+## Terraform
+
+アプリのリソース（Cloud Run Job など）は `tf/` で管理する。プロジェクト・API・Artifact Registry・state のバケットは account-baseline で管理している。
+
+```
+tf/modules/      # アプリのリソース（dev・prod で共通）
+tf/envs/dev/     # dev（backend・provider）
+tf/envs/prod/    # prod
+```
+
+- state は環境のプロジェクトのバケットに、`notify-schedule/` のキーで置く。
+- リポジトリは public なので、秘密の値や個人の情報（カレンダー ID、メールアドレス、nandemo-oshirase のエンドポイントなど）は tfvars や `.tf` に書かない。プロジェクト ID も `make tf-plan` に渡す。
+- PR では、CI が向き先の環境（develop 向きは dev、main 向きは prod）で plan し、結果を PR にコメントする（プロジェクト ID は伏せる）。
+- terraform は unfree なので、cache.nixos.org にビルド済みのものがない。flake.lock を更新したあとの最初の `nix develop` では、ソースからビルドする（数分かかる）。

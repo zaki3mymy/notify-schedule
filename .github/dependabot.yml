@@ -36,6 +36,21 @@ updates:
       prefix-development: "chore"
       include: "scope"
 
+  # Terraform のプロバイダ（required_providers と .terraform.lock.hcl）
+  - package-ecosystem: "terraform"
+    directories:
+      - "/tf/envs/dev"
+      - "/tf/envs/prod"
+    schedule:
+      interval: "weekly"
+    groups:
+      terraform-providers:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
   # コンテナのベースイメージ（Containerfile の FROM。ダイジェストで固定したものも更新する）
   - package-ecosystem: "docker"
     directory: "/"

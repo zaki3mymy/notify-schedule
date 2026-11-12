@@ -8,6 +8,12 @@
 # 手元で動かすときの環境変数。例は .env.example
 /.env
 
+# Terraform（.terraform.lock.hcl はコミットする）
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+
 # テスト
 *.test
 *.out
