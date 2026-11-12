@@ -28,4 +28,6 @@ module "app" {
 
   project_id = var.project_id
   image      = var.image
+
+  # dev は毎日は動かさないので、Cloud Scheduler を作らない（使うときは手で実行する）
 }
