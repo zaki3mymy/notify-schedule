@@ -1,0 +1,15 @@
+# ビルドの成果物と、make で入れたツール
+/bin/
+
+# テスト
+*.test
+*.out
+coverage.*
+
+# direnv（nix develop のキャッシュ）
+.direnv/
+
+# IDE・OS
+.idea/
+.vscode/
+.DS_Store

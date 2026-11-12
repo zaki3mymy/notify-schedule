@@ -1,0 +1,61 @@
+version: "2"
+
+linters:
+  # standard（errcheck・govet・ineffassign・staticcheck・unused）に加えて有効にする
+  enable:
+    - bodyclose
+    - depguard
+    - errorlint
+    - gosec
+    - misspell
+    - noctx
+    - unconvert
+    - usestdlibvars
+
+  settings:
+    # 依存の向きを機械的に守る（README の「ディレクトリ構成と依存の向き」を参照）
+    #   cmd → adapter / config → usecase → domain
+    depguard:
+      rules:
+        # domain は何にも依存しない（標準ライブラリだけ）
+        domain:
+          list-mode: strict
+          files:
+            - "**/internal/domain/**"
+          allow:
+            - $gostd
+        # usecase は domain だけに依存する
+        usecase:
+          list-mode: strict
+          files:
+            - "**/internal/usecase/**"
+          allow:
+            - $gostd
+            - github.com/zaki3mymy/notify-schedule/internal/domain
+        # adapter は設定（config）を直接読まない。値はコンストラクタで受け取る
+        adapter:
+          files:
+            - "**/internal/adapter/**"
+          deny:
+            - pkg: github.com/zaki3mymy/notify-schedule/internal/config
+              desc: adapter は config に依存しない（値は cmd からコンストラクタで渡す）
+            - pkg: github.com/zaki3mymy/notify-schedule/internal/adapter
+              desc: adapter どうしは依存しない
+        # config は adapter・usecase に依存しない
+        config:
+          files:
+            - "**/internal/config/**"
+          deny:
+            - pkg: github.com/zaki3mymy/notify-schedule/internal/adapter
+              desc: config は adapter に依存しない
+            - pkg: github.com/zaki3mymy/notify-schedule/internal/usecase
+              desc: config は usecase に依存しない
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/zaki3mymy/notify-schedule
