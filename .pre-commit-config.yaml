@@ -34,4 +34,10 @@ repos:
         files: (\.go$|^go\.(mod|sum)$)
         pass_filenames: false
 
+    -   id: actionlint
+        name: GitHub Actions lint
+        entry: actionlint
+        language: system
+        files: ^\.github/workflows/.+\.ya?ml$
+
 default_install_hook_types: [pre-commit]

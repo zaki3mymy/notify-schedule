@@ -26,6 +26,8 @@
             golangci-lint
             gnumake
             pre-commit
+            # GitHub Actions のワークフローの lint（pre-commit で使う）
+            actionlint
           ];
 
           # go.mod の go より新しいツールチェーンを勝手に取得せず、nixpkgs の go を使う
