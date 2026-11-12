@@ -8,6 +8,10 @@
 APP      := ./bin/notify-schedule
 COVERAGE := coverage.out
 
+# コンテナのツール（podman があれば podman、なければ docker）と、ビルドするイメージの名前
+CONTAINER ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
+IMAGE     ?= notify-schedule:local
+
 .PHONY: help
 help: ## ターゲットの一覧を出す
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -34,6 +38,10 @@ fmt: ## コードを整形する（ファイルを書き換える）
 lint: ## 静的解析をする（go vet・整形の崩れ・依存の向きも確認する）
 	go vet ./...
 	golangci-lint run
+
+.PHONY: image
+image: ## コンテナイメージをビルドする（IMAGE で名前を変えられる）
+	$(CONTAINER) build -f Containerfile -t $(IMAGE) .
 
 .PHONY: tidy
 tidy: ## go.mod と go.sum を整理する

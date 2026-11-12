@@ -37,6 +37,7 @@ make build
 | `make cover-html` | カバレッジを HTML にする（`coverage.html`。`make test` のあとに実行する） |
 | `make fmt` | コードを整形する（ファイルを書き換える） |
 | `make lint` | 静的解析をする（`go vet`、golangci-lint。整形の崩れと依存の向きも確認する） |
+| `make image` | コンテナイメージをビルドする（`IMAGE` で名前、`CONTAINER` で podman・docker を変えられる） |
 | `make tidy` | `go.mod` と `go.sum` を整理する |
 | `make clean` | ビルドの成果物を消す |
 
@@ -47,7 +48,7 @@ make build
 PR（`develop`・`main` 向き）と、`develop`・`main` への push で [.github/workflows/ci.yml](../.github/workflows/ci.yml) が動く。
 
 - ローカルと同じツールを使うため、flake.nix の devShell の中で make のターゲットを実行する（`nix develop -c make lint` など）。`make lint` だけだと、ランナーにあるツールが使われてしまう。
-- 実行するのは `make lint`・`make test`・`make build` と、ワークフローの lint（actionlint）。
+- 実行するのは `make lint`・`make test`・`make build` と、ワークフローの lint（actionlint）。別のジョブで、コンテナイメージのビルド（`make image`）も確かめる（push はしない）。
 - カバレッジは、実行結果の画面（ジョブのサマリー）に全体と関数ごとの値を出し、HTML のレポート（`coverage.html`）と `coverage.out` を成果物（`coverage-report`、30日間）に残す。
 - ファズテストは、`go test` ではシード（`f.Add` の入力）だけを実行する。入力を生成して探すときは、手元で `go test -fuzz=<名前> ./<パッケージ>` を実行する。
 - キャッシュ
@@ -65,5 +66,6 @@ PR（`develop`・`main` 向き）と、`develop`・`main` への push で [.gith
 | 対象 | 内容 |
 |---|---|
 | `github-actions` | ワークフローのアクション（SHA で固定したものも、SHA とバージョンのコメントを更新する） |
+| `docker` | Containerfile のベースイメージ（ダイジェストも更新する） |
 | `gomod` | Go のモジュール（マイナー・パッチは1つの PR にまとめる） |
 | `nix` | flake.lock の入力（nixpkgs を進めると、開発のツールがまとめて新しくなる） |
