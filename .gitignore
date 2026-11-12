@@ -1,0 +1,12 @@
+# ビルドの成果物と、make で入れたツール
+/bin/
+
+# テスト
+*.test
+*.out
+coverage.*
+
+# IDE・OS
+.idea/
+.vscode/
+.DS_Store
