@@ -3,3 +3,8 @@ variable "project_id" {
   description = "デプロイ先のプロジェクト"
   type        = string
 }
+
+variable "image" {
+  description = "Cloud Run Job で動かすイメージ（make tf-plan・tf-apply が、コミットの SHA から組み立てて渡す）"
+  type        = string
+}

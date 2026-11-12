@@ -185,7 +185,9 @@ jobs:
         shell: bash
         env:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-        run: make tf-plan ENV="$TF_ENV" GCP_PROJECT_ID="$GCP_PROJECT_ID" 2>&1 | tee "$RUNNER_TEMP/plan.txt"
+          # イメージは PR の head のコミットのタグにする（plan ではイメージがあるかは確かめない）
+          IMAGE_TAG: ${{ github.event.pull_request.head.sha }}
+        run: make tf-plan ENV="$TF_ENV" GCP_PROJECT_ID="$GCP_PROJECT_ID" IMAGE_TAG="$IMAGE_TAG" 2>&1 | tee "$RUNNER_TEMP/plan.txt"
 
       - name: Comment plan result
         # plan が失敗したときも、エラーの内容を PR に残す
