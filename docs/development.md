@@ -46,6 +46,8 @@ make build
 | `make tf-validate` | Terraform を検証する（backend には接続しない） |
 | `make tf-init ENV=dev TF_STATE_BUCKET=...` | Terraform を初期化する（Google Cloud へのログインが要る） |
 | `make tf-plan ENV=dev GCP_PROJECT_ID=...` | Terraform の plan（先に `tf-init`） |
+| `make tf-apply ENV=dev GCP_PROJECT_ID=...` | Terraform の apply（先に `tf-init`） |
+| `make secret-update ENV=dev GCP_PROJECT_ID=... FILE=config.yaml` | 設定ファイルを Secret Manager に入れる（[configuration.md](./configuration.md)） |
 | `make tidy` | `go.mod` と `go.sum` を整理する |
 | `make clean` | ビルドの成果物を消す |
 

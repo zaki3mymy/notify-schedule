@@ -72,6 +72,16 @@ tf-plan: ## Terraform の plan（ENV・GCP_PROJECT_ID が要る。先に tf-init
 	$(call require,ENV GCP_PROJECT_ID)
 	terraform -chdir=tf/envs/$(ENV) plan -input=false -no-color -var="project_id=$(GCP_PROJECT_ID)"
 
+.PHONY: tf-apply
+tf-apply: ## Terraform の apply（ENV・GCP_PROJECT_ID が要る。先に tf-init）
+	$(call require,ENV GCP_PROJECT_ID)
+	terraform -chdir=tf/envs/$(ENV) apply -input=false -var="project_id=$(GCP_PROJECT_ID)"
+
+.PHONY: secret-update
+secret-update: ## 設定ファイルを Secret Manager に入れ、古いバージョンを消す（ENV・GCP_PROJECT_ID・FILE が要る）
+	$(call require,ENV GCP_PROJECT_ID FILE)
+	ENV=$(ENV) GCP_PROJECT_ID=$(GCP_PROJECT_ID) FILE=$(FILE) ./scripts/secret-update.sh
+
 # require は、変数が空ならエラーにする
 require = $(foreach v,$(1),$(if $($(v)),,$(error $(v) を指定してください)))
 
