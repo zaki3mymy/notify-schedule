@@ -1,6 +1,10 @@
 # ビルドの成果物と、make で入れたツール
 /bin/
 
+# 本物の設定ファイル（API キーやカレンダーの ID を含む）。例は config.example.yaml
+/config.yaml
+*.local.yaml
+
 # テスト
 *.test
 *.out
