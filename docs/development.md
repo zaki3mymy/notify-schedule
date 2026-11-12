@@ -46,7 +46,7 @@ make build
 | `make tf-lint` | Terraform の整形の崩れと、TFLint の指摘を確認する |
 | `make tf-validate` | Terraform を検証する（backend には接続しない） |
 | `make tf-init ENV=dev TF_STATE_BUCKET=...` | Terraform を初期化する（Google Cloud へのログインが要る） |
-| `make tf-plan ENV=dev GCP_PROJECT_ID=...` | Terraform の plan（先に `tf-init`） |
+| `make tf-plan ENV=dev GCP_PROJECT_ID=...` | Terraform の plan（先に `tf-init`。Cloud Run Job のイメージは `IMAGE_TAG` のタグ。既定は HEAD のコミットの SHA） |
 | `make tf-apply ENV=dev GCP_PROJECT_ID=...` | Terraform の apply（先に `tf-init`。`TF_APPLY_ARGS` でオプションを足せる） |
 | `make secret-update ENV=dev GCP_PROJECT_ID=... FILE=config.yaml` | 設定ファイルを Secret Manager に入れる（[configuration.md](./configuration.md)） |
 | `make tidy` | `go.mod` と `go.sum` を整理する |
@@ -77,7 +77,7 @@ PR（`develop`・`main` 向き）で [.github/workflows/ci.yml](../.github/workf
 1. CI（`ci.yml`）を呼び、通ったら次に進む。
 2. コンテナイメージをビルドし、Artifact Registry に push する（`make image`・`make image-push`）。
    - タグはコミットの SHA。タグは上書きできないので、同じコミットのイメージがもうあるときは、ビルドと push を飛ばす。
-3. `make tf-init`・`make tf-apply` で、Terraform を apply する（承認は待たない。差分は PR の plan のコメントで確かめておく）。
+3. `make tf-init`・`make tf-apply` で、Terraform を apply する（承認は待たない。差分は PR の plan のコメントで確かめておく）。Cloud Run Job のイメージは、2 のコミットの SHA のタグにする。
 
 - GitHub の Environment（`develop`・`prod`）の secrets で、Workload Identity 連携で認証する。
 - 同じブランチのデプロイは順に行う（途中で取り消さない）。
@@ -106,4 +106,6 @@ tf/envs/prod/    # prod
 
 - state は環境のプロジェクトのバケットに、`notify-schedule/` のキーで置く。
 - リポジトリは public なので、秘密の値や個人の情報（カレンダー ID、メールアドレス、nandemo-oshirase のエンドポイントなど）は tfvars や `.tf` に書かない。プロジェクト ID も `make tf-plan` に渡す。
+- Cloud Run Job のイメージ（変数 `image`）は、`make tf-plan`・`make tf-apply` が `IMAGE_TAG`（既定は HEAD のコミットの SHA）から組み立てて渡す。push していないコミットで apply すると、イメージがないので失敗する。
+  - PR の plan では、PR の head のコミットのタグを渡すので、イメージの差分が毎回出る。
 - PR では、CI が向き先の環境（develop 向きは dev、main 向きは prod）で plan し、結果を PR にコメントする（プロジェクト ID は伏せる）。
