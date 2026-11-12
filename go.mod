@@ -2,7 +2,10 @@ module github.com/zaki3mymy/notify-schedule
 
 go 1.27.0
 
-require google.golang.org/api v0.313.0
+require (
+	go.yaml.in/yaml/v3 v3.0.6
+	google.golang.org/api v0.313.0
+)
 
 require (
 	cloud.google.com/go/auth v0.24.1-0.20261001053825-dbc26066f70a // indirect
