@@ -50,7 +50,11 @@ API キーやカレンダーの ID は、ログに出さない。
 
 ```shell
 cp config.example.yaml config.yaml   # 値を書き換える（config.yaml はコミットしない）
-export NOTIFY_SCHEDULE_CONFIG=config.yaml
+cp .env.example .env                 # 環境変数（.env はコミットしない）
+
+# direnv を使っていれば、.env はこのディレクトリに入ったときに読み込まれる（.envrc の dotenv_if_exists）。
+# direnv を使わないときは、自分で読み込む
+set -a; source .env; set +a
 
 # 設定の確認だけ（認証情報は要らない）
 go run ./cmd/notify-schedule --validate-config
