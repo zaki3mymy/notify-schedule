@@ -1,0 +1,105 @@
+name: CD
+
+# develop・main への push で、CI を通したあと、コンテナイメージを Artifact Registry に push し、
+# terraform apply する。develop は dev、main は prod の環境に出す
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "flake.nix"
+      - "flake.lock"
+      - "Makefile"
+      - ".golangci.yml"
+      - "tf/**"
+      - "Containerfile"
+      - ".dockerignore"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同じブランチのデプロイは順に行う（途中で止めると state のロックが残ることがあるので、取り消さない）
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    # 呼ばれる側のジョブ（PR だけで動く plan のジョブも含む）が要る権限を渡す
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+  deploy:
+    needs: ci
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    name: Deploy
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'develop' }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_ENV: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
+      REGISTRY: asia-northeast1-docker.pkg.dev
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      # イメージのタグはコミットの SHA。Artifact Registry のタグは上書きできないので、
+      # 同じコミットを出し直すとき（手で動かしたときなど）は、build と push を飛ばす
+      - name: Set image name
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: echo "IMAGE=${REGISTRY}/${GCP_PROJECT_ID}/apps/notify-schedule:${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      - name: Log in to Artifact Registry
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REGISTRY}"
+
+      - name: Check image
+        id: image
+        run: |
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "イメージはもうあるので、build と push を飛ばします"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push image
+        if: steps.image.outputs.exists != 'true'
+        run: make image image-push CONTAINER=docker IMAGE="$IMAGE"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~1.17.0"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        env:
+          TF_STATE_BUCKET: ${{ secrets.GCP_TFSTATE_BUCKET }}
+        run: make tf-init ENV="$TF_ENV" TF_STATE_BUCKET="$TF_STATE_BUCKET"
+
+      # ログは公開されるが、プロジェクト ID は secrets から渡しているので、ログでは伏せられる
+      - name: Terraform apply
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: make tf-apply ENV="$TF_ENV" GCP_PROJECT_ID="$GCP_PROJECT_ID" TF_APPLY_ARGS="-auto-approve -no-color"
