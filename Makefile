@@ -43,6 +43,38 @@ lint: ## 静的解析をする（go vet・整形の崩れ・依存の向きも�
 image: ## コンテナイメージをビルドする（IMAGE で名前を変えられる）
 	$(CONTAINER) build -f Containerfile -t $(IMAGE) .
 
+TF_ENVS := dev prod
+
+.PHONY: tf-fmt
+tf-fmt: ## Terraform を整形する（ファイルを書き換える）
+	terraform fmt -recursive tf
+
+.PHONY: tf-lint
+tf-lint: ## Terraform の整形の崩れと、TFLint の指摘を確認する
+	terraform fmt -check -recursive tf
+	tflint --chdir=tf --recursive --config $(CURDIR)/tf/.tflint.hcl
+
+.PHONY: tf-validate
+tf-validate: ## Terraform を検証する（backend には接続しない）
+	@for env in $(TF_ENVS); do \
+		terraform -chdir=tf/envs/$$env init -backend=false -input=false >/dev/null && \
+		terraform -chdir=tf/envs/$$env validate || exit 1; \
+	done
+
+# 以下は Google Cloud にログインしてから使う（ENV=dev か prod）
+.PHONY: tf-init
+tf-init: ## Terraform を初期化する（ENV・TF_STATE_BUCKET が要る）
+	$(call require,ENV TF_STATE_BUCKET)
+	terraform -chdir=tf/envs/$(ENV) init -input=false -backend-config="bucket=$(TF_STATE_BUCKET)"
+
+.PHONY: tf-plan
+tf-plan: ## Terraform の plan（ENV・GCP_PROJECT_ID が要る。先に tf-init）
+	$(call require,ENV GCP_PROJECT_ID)
+	terraform -chdir=tf/envs/$(ENV) plan -input=false -no-color -var="project_id=$(GCP_PROJECT_ID)"
+
+# require は、変数が空ならエラーにする
+require = $(foreach v,$(1),$(if $($(v)),,$(error $(v) を指定してください)))
+
 .PHONY: tidy
 tidy: ## go.mod と go.sum を整理する
 	go mod tidy

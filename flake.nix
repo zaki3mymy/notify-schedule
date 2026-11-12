@@ -28,6 +28,8 @@
             pre-commit
             # GitHub Actions のワークフローの lint（pre-commit で使う）
             actionlint
+            # terraform は unfree でビルド済みのものがなく、ソースからのビルドに時間がかかるので入れない（別に入れる）
+            tflint
           ];
 
           # go.mod の go より新しいツールチェーンを勝手に取得せず、nixpkgs の go を使う

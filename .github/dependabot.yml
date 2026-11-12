@@ -1,5 +1,5 @@
 # Dependabot のバージョンアップデート（新しいバージョンが出たら更新 PR を作る）
-# 脆弱性の修正 PR（security updates）は account-baseline の Terraform で有効にしている
+# 脆弱性の修正 PR（security updates）は、リポジトリの設定で有効にしている
 # PR の向き先は既定でデフォルトブランチ（develop）
 #
 # PR のタイトル（コミットメッセージ）は commit-message で Conventional Commits の形に固定する。
@@ -31,6 +31,21 @@ updates:
       # マイナー・パッチは1つの PR にまとめる（メジャーは個別の PR）
       go-minor-and-patch:
         update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
+  # Terraform のプロバイダ（required_providers と .terraform.lock.hcl）
+  - package-ecosystem: "terraform"
+    directories:
+      - "/tf/envs/dev"
+      - "/tf/envs/prod"
+    schedule:
+      interval: "weekly"
+    groups:
+      terraform-providers:
+        patterns: ["*"]
     commit-message:
       prefix: "chore"
       prefix-development: "chore"
