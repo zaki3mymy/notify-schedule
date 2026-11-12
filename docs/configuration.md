@@ -8,6 +8,8 @@
 |---|---|---|
 | `NOTIFY_SCHEDULE_CONFIG` | はい | 設定ファイルのパス |
 
+手元で動かすときは、[.env.example](../.env.example) を `.env` にコピーして使う（`.env` はコミットしない。direnv を使っていれば自動で読み込まれる）。デプロイ先では、Cloud Run Job の設定で渡す。
+
 ## 設定ファイル
 
 例は [config.example.yaml](../config.example.yaml)。本物の設定ファイル（`config.yaml`）はコミットしない（`.gitignore` に入れてある）。デプロイ先では Secret Manager に置き、ファイルとしてマウントする。
