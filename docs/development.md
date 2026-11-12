@@ -81,7 +81,7 @@ PR（`develop`・`main` 向き）と、`develop`・`main` への push で [.gith
 
 ## Terraform
 
-アプリのリソース（Cloud Run Job など）は `tf/` で管理する。プロジェクト・API・Artifact Registry・state のバケットは account-baseline で管理している。
+アプリのリソース（Cloud Run Job など）は `tf/` で管理する。プロジェクト・API・Artifact Registry・state のバケットは、このリポジトリの外で用意している。
 
 ```
 tf/modules/      # アプリのリソース（dev・prod で共通）

@@ -1,5 +1,5 @@
 # Dependabot のバージョンアップデート（新しいバージョンが出たら更新 PR を作る）
-# 脆弱性の修正 PR（security updates）は account-baseline の Terraform で有効にしている
+# 脆弱性の修正 PR（security updates）は、リポジトリの設定で有効にしている
 # PR の向き先は既定でデフォルトブランチ（develop）
 #
 # PR のタイトル（コミットメッセージ）は commit-message で Conventional Commits の形に固定する。

@@ -25,7 +25,4 @@ provider "google" {
 
 module "app" {
   source = "../../modules"
-
-  project_id = var.project_id
-  env        = "dev"
 }
