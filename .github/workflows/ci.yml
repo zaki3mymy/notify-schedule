@@ -6,7 +6,7 @@ name: CI
 on:
   pull_request:
     branches: [main, develop]
-    paths: &paths
+    paths:
       - "**.go"
       - "go.mod"
       - "go.sum"
@@ -18,19 +18,14 @@ on:
       - "Containerfile"
       - ".dockerignore"
       - ".github/workflows/**"
-  # キャッシュを作るため、develop・main への push でも動かす（キャッシュは PR では保存しない）。
-  # CD（#18）が workflow_call でこのワークフローを呼ぶようになったら、二重に動かないよう push は外す
-  push:
-    branches: [main, develop]
-    paths: *paths
-  # CD（cd.yml）から呼ぶ
+  # develop・main への push では、CD（cd.yml）から呼ばれる
   workflow_call:
 
 permissions:
   contents: read
 
 env:
-  # キャッシュは develop・main への push（と、そこから呼ばれたとき）だけで保存する。
+  # キャッシュは develop・main への push で CD から呼ばれたとき（と、手で CD を動かしたとき）だけ保存する。
   # PR で作ったキャッシュはその PR でしか使えず、リポジトリのキャッシュの容量（10GB）を埋めるだけなので、
   # PR では develop・main のキャッシュを読むだけにする
   SAVE_CACHE: ${{ github.event_name != 'pull_request' }}

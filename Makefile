@@ -43,6 +43,10 @@ lint: ## 静的解析をする（go vet・整形の崩れ・依存の向きも�
 image: ## コンテナイメージをビルドする（IMAGE で名前を変えられる）
 	$(CONTAINER) build -f Containerfile -t $(IMAGE) .
 
+.PHONY: image-push
+image-push: ## コンテナイメージを push する（IMAGE に push 先を含めた名前を指定する。先に make image）
+	$(CONTAINER) push $(IMAGE)
+
 TF_ENVS := dev prod
 
 .PHONY: tf-fmt
@@ -71,6 +75,11 @@ tf-init: ## Terraform を初期化する（ENV・TF_STATE_BUCKET が要る）
 tf-plan: ## Terraform の plan（ENV・GCP_PROJECT_ID が要る。先に tf-init）
 	$(call require,ENV GCP_PROJECT_ID)
 	terraform -chdir=tf/envs/$(ENV) plan -input=false -no-color -var="project_id=$(GCP_PROJECT_ID)"
+
+.PHONY: tf-apply
+tf-apply: ## Terraform の apply（ENV・GCP_PROJECT_ID が要る。先に tf-init。TF_APPLY_ARGS でオプションを足せる）
+	$(call require,ENV GCP_PROJECT_ID)
+	terraform -chdir=tf/envs/$(ENV) apply -input=false $(TF_APPLY_ARGS) -var="project_id=$(GCP_PROJECT_ID)"
 
 # require は、変数が空ならエラーにする
 require = $(foreach v,$(1),$(if $($(v)),,$(error $(v) を指定してください)))
