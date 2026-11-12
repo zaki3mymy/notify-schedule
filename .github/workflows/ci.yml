@@ -6,7 +6,7 @@ name: CI
 on:
   pull_request:
     branches: [main, develop]
-    paths:
+    paths: &paths
       - "**.go"
       - "go.mod"
       - "go.sum"
@@ -15,11 +15,22 @@ on:
       - "Makefile"
       - ".golangci.yml"
       - ".github/workflows/**"
+  # キャッシュを作るため、develop・main への push でも動かす（キャッシュは PR では保存しない）。
+  # CD（#18）が workflow_call でこのワークフローを呼ぶようになったら、二重に動かないよう push は外す
+  push:
+    branches: [main, develop]
+    paths: *paths
   # CD（cd.yml）から呼ぶ
   workflow_call:
 
 permissions:
   contents: read
+
+env:
+  # キャッシュは develop・main への push（と、そこから呼ばれたとき）だけで保存する。
+  # PR で作ったキャッシュはその PR でしか使えず、リポジトリのキャッシュの容量（10GB）を埋めるだけなので、
+  # PR では develop・main のキャッシュを読むだけにする
+  SAVE_CACHE: ${{ github.event_name != 'pull_request' }}
 
 jobs:
   check:
@@ -41,11 +52,14 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: ${{ env.SAVE_CACHE }}
 
       # Go のモジュール・ビルドのキャッシュと、golangci-lint の解析のキャッシュ。
-      # Go のバージョン（flake.lock）が変わるとビルドのキャッシュが使えなくなるので、キーに含める
-      - name: Cache Go
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Go のバージョン（flake.lock）が変わるとビルドのキャッシュが使えなくなるので、キーに含める。
+      # 保存は最後のステップで、SAVE_CACHE のときだけ行う
+      - name: Restore Go cache
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/go-build
@@ -69,3 +83,13 @@ jobs:
 
       - name: Build
         run: nix develop -c make build
+
+      - name: Save Go cache
+        if: env.SAVE_CACHE == 'true' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}

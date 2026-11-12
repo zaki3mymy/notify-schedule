@@ -43,13 +43,16 @@ make build
 
 ## CI
 
-PR（`develop`・`main` 向き）で [.github/workflows/ci.yml](../.github/workflows/ci.yml) が動く。
+PR（`develop`・`main` 向き）と、`develop`・`main` への push で [.github/workflows/ci.yml](../.github/workflows/ci.yml) が動く。
 
 - ローカルと同じツールを使うため、flake.nix の devShell の中で make のターゲットを実行する（`nix develop -c make lint` など）。`make lint` だけだと、ランナーにあるツールが使われてしまう。
 - 実行するのは `make lint`・`make test`・`make build` と、ワークフローの lint（actionlint）。
 - キャッシュ
   - nix のストア（go・golangci-lint などのツール）：キーは flake.nix・flake.lock のハッシュ。ツールはビルドせず、cache.nixos.org からビルド済みのものを取得するが、その取得も省く。
   - Go のモジュール・ビルドのキャッシュと、golangci-lint の解析のキャッシュ：キーは go.mod・go.sum・flake.lock のハッシュ。
+  - キャッシュを保存するのは、`develop`・`main` への push のときだけ。PR では読むだけにする。
+    - GitHub Actions のキャッシュは、作ったブランチと、そのブランチに向いた PR でしか使えない。PR で作ったキャッシュはその PR でしか使えず、リポジトリのキャッシュの容量（10GB。超えると古いものから消える）を埋めるだけになるため。
+    - develop のキャッシュは develop 向きの PR で、main のキャッシュは main 向きの PR（リリースの PR）で使われる。
 - PR のタイトルは Conventional Commits の形（`feat: ...`、`fix(cli): ...` など）にする。[.github/workflows/label-pr-by-title.yml](../.github/workflows/label-pr-by-title.yml) がタイトルからラベルを付ける（形が違うときは失敗する）。
 
 ## Dependabot
