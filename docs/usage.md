@@ -74,3 +74,19 @@ go run ./cmd/notify-schedule --dry-run --date 2026-12-24 --calendar 家族
 ```
 
 自分のアカウントの権限で読む場合は、`gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/calendar.readonly` で ADC を作る（gcloud の既定の OAuth クライアントでカレンダーのスコープを許可できないときは、自分の OAuth クライアントを `--client-id-file` で指定する）。
+
+## コンテナで動かす
+
+```shell
+make image   # notify-schedule:local をビルドする（podman があれば podman、なければ docker）
+
+docker run --rm --user "$(id -u)" \
+  -v "$PWD/config.yaml:/config/config.yaml:ro" \
+  -e NOTIFY_SCHEDULE_CONFIG=/config/config.yaml \
+  -v "$HOME/.config/gcloud/application_default_credentials.json:/adc.json:ro" \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/adc.json \
+  notify-schedule:local --dry-run
+```
+
+- イメージは distroless（`static-debian13:nonroot`）で、ユーザー 65532 で動く。マウントするファイルが自分だけ読める権限（`0600`）のときは、docker では `--user "$(id -u)"`、podman では `--userns=keep-id` を付けて、自分のユーザーで動かす。
+- タイムゾーンのデータはバイナリに埋め込んでいるので、イメージにはなくてよい。

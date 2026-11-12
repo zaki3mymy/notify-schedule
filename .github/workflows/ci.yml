@@ -14,6 +14,8 @@ on:
       - "flake.lock"
       - "Makefile"
       - ".golangci.yml"
+      - "Containerfile"
+      - ".dockerignore"
       - ".github/workflows/**"
   # キャッシュを作るため、develop・main への push でも動かす（キャッシュは PR では保存しない）。
   # CD（#18）が workflow_call でこのワークフローを呼ぶようになったら、二重に動かないよう push は外す
@@ -121,3 +123,14 @@ jobs:
             ~/go/pkg/mod
             ~/.cache/golangci-lint
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+  # コンテナイメージがビルドできることを確かめる（push はしない。push は CD で行う）
+  image:
+    runs-on: ubuntu-latest
+    name: Build container image
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build image
+        run: make image CONTAINER=docker
