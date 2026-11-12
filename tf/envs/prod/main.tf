@@ -28,4 +28,8 @@ module "app" {
 
   project_id = var.project_id
   image      = var.image
+
+  # 毎日 20:00（Asia/Tokyo）に、明日の予定を通知する
+  schedule         = "0 20 * * *"
+  scheduler_paused = false
 }

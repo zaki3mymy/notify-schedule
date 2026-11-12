@@ -44,6 +44,21 @@
 
 API キーやカレンダーの ID は、ログに出さない。
 
+## デプロイ先での実行
+
+Cloud Scheduler が、毎日 20:00（Asia/Tokyo）に Cloud Run Job `notify-schedule` を実行する（時刻は `tf/envs/*/main.tf` の `schedule`）。dev の Scheduler は一時停止にしているので、使うときは手で実行する。
+
+```shell
+gcloud run jobs execute notify-schedule --project=<プロジェクト ID> --region=asia-northeast1 --wait
+
+# フラグは --args にカンマ区切りで渡す
+gcloud run jobs execute notify-schedule --project=<プロジェクト ID> --region=asia-northeast1 --wait \
+  --args=--dry-run,--date=2026-12-24
+```
+
+- Scheduler は、実行の要求が失敗しても再送しない。アプリが失敗したとき（終了コード `1`）の再実行は、Job のリトライ（1回）に任せる。
+- Scheduler 用のサービスアカウント（`notify-schedule-scheduler`）は、この Job の実行（`roles/run.invoker`）しかできない。
+
 ## 手元で動かす
 
 開発環境（[development.md](./development.md)）に入ってから実行する。
