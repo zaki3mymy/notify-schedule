@@ -46,7 +46,7 @@ API キーやカレンダーの ID は、ログに出さない。
 
 ## デプロイ先での実行
 
-Cloud Scheduler が、毎日 20:00（Asia/Tokyo）に Cloud Run Job `notify-schedule` を実行する（時刻は `tf/envs/*/main.tf` の `schedule`）。dev の Scheduler は一時停止にしているので、使うときは手で実行する。
+prod では、Cloud Scheduler が毎日 21:00（Asia/Tokyo）に Cloud Run Job `notify-schedule` を実行する（時刻は `tf/envs/prod/main.tf` の `schedule`）。dev には Scheduler を作らないので、使うときは手で実行する（Cloud Scheduler の無料枠は、一時停止のものも含めて請求先アカウントで3つまでのため）。
 
 ```shell
 gcloud run jobs execute notify-schedule --project=<プロジェクト ID> --region=asia-northeast1 --wait

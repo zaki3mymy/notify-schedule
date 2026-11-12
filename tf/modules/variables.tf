@@ -9,11 +9,7 @@ variable "image" {
 }
 
 variable "schedule" {
-  description = "Job を実行する時刻（cron の形式。Asia/Tokyo）"
+  description = "Job を実行する時刻（cron の形式。Asia/Tokyo）。null なら Cloud Scheduler を作らない（手で実行する）"
   type        = string
-}
-
-variable "scheduler_paused" {
-  description = "Scheduler を一時停止にするか（dev は手で実行するので true）"
-  type        = bool
+  default     = null
 }
