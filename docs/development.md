@@ -11,7 +11,9 @@
 | gnumake | 開発の操作（make のターゲット） |
 | pre-commit | コミット前のチェック |
 | actionlint | GitHub Actions のワークフローの lint |
-| terraform・tflint | インフラ（`tf/`）の管理と lint |
+| tflint | Terraform の lint |
+
+terraform（1.17 以上）は flake に入れていないので、別に入れる。unfree で cache.nixos.org にビルド済みのものがなく、flake.lock を更新するたびにソースからのビルド（数分）がかかるため。CI では `hashicorp/setup-terraform` で入れる。
 
 [direnv](https://direnv.net/) を使うと、このディレクトリに入ったときに自動でツールが PATH に入る（[.envrc](../.envrc)）。direnv を使わないときは `nix develop` を実行する。
 
@@ -90,4 +92,3 @@ tf/envs/prod/    # prod
 - state は環境のプロジェクトのバケットに、`notify-schedule/` のキーで置く。
 - リポジトリは public なので、秘密の値や個人の情報（カレンダー ID、メールアドレス、nandemo-oshirase のエンドポイントなど）は tfvars や `.tf` に書かない。プロジェクト ID も `make tf-plan` に渡す。
 - PR では、CI が向き先の環境（develop 向きは dev、main 向きは prod）で plan し、結果を PR にコメントする（プロジェクト ID は伏せる）。
-- terraform は unfree なので、cache.nixos.org にビルド済みのものがない。flake.lock を更新したあとの最初の `nix develop` では、ソースからビルドする（数分かかる）。

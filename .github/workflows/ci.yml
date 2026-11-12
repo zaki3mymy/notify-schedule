@@ -81,6 +81,13 @@ jobs:
       - name: Lint workflows
         run: nix develop -c actionlint
 
+      # terraform は flake に入れていない（ソースからのビルドに時間がかかるため）。tflint は flake のものを使う
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~1.17.0"
+          terraform_wrapper: false
+
       - name: Lint and validate Terraform
         env:
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tf-plugin-cache
@@ -159,15 +166,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
-
-      - name: Cache Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+      # このジョブは terraform と make だけを使うので、nix は使わない
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          save: false
+          terraform_version: "~1.17.0"
+          terraform_wrapper: false
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
@@ -178,7 +182,7 @@ jobs:
       - name: Terraform init
         env:
           TF_STATE_BUCKET: ${{ secrets.GCP_TFSTATE_BUCKET }}
-        run: nix develop -c make tf-init ENV="$TF_ENV" TF_STATE_BUCKET="$TF_STATE_BUCKET"
+        run: make tf-init ENV="$TF_ENV" TF_STATE_BUCKET="$TF_STATE_BUCKET"
 
       - name: Terraform plan
         id: plan
@@ -186,7 +190,7 @@ jobs:
         shell: bash
         env:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-        run: nix develop -c make tf-plan ENV="$TF_ENV" GCP_PROJECT_ID="$GCP_PROJECT_ID" 2>&1 | tee "$RUNNER_TEMP/plan.txt"
+        run: make tf-plan ENV="$TF_ENV" GCP_PROJECT_ID="$GCP_PROJECT_ID" 2>&1 | tee "$RUNNER_TEMP/plan.txt"
 
       - name: Comment plan result
         # plan が失敗したときも、エラーの内容を PR に残す
