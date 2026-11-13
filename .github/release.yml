@@ -1,0 +1,22 @@
+# リリースノートの自動生成の設定。PR のラベルで見出しに振り分ける（1つの PR は、最初に当てはまった見出しにだけ載る）
+changelog:
+  exclude:
+    labels:
+      # develop → main のリリース PR と、main → develop の取り込みの PR
+      - skip-release-notes
+  categories:
+    - title: 💥 破壊的変更
+      labels:
+        - breaking
+    - title: 🚀 新機能
+      labels:
+        - feat
+    - title: 🐛 バグ修正
+      labels:
+        - fix
+    - title: 📦 依存関係の更新
+      labels:
+        - dependencies
+    - title: 🔧 その他
+      labels:
+        - "*"

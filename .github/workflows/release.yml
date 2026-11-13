@@ -1,0 +1,16 @@
+name: Release
+run-name: "Release: ${{ github.ref_name }}"
+
+# 手でタグを push したときに、GitHub リリースを作る（CD が打つタグでは起動しないので、CD からは直接作る）
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: zaki3mymy/actions/.github/workflows/create-release.yml@main
+    with:
+      tag: ${{ github.ref_name }}
