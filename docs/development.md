@@ -49,6 +49,7 @@ make build
 | `make tf-plan ENV=dev GCP_PROJECT_ID=...` | Terraform の plan（先に `tf-init`。Cloud Run Job のイメージは `IMAGE_TAG` のタグ。既定は HEAD のコミットの SHA） |
 | `make tf-apply ENV=dev GCP_PROJECT_ID=...` | Terraform の apply（先に `tf-init`。`TF_APPLY_ARGS` でオプションを足せる） |
 | `make smoke-test GCP_PROJECT_ID=...` | デプロイした Cloud Run Job を `--dry-run` で実行し、成功するかを確かめる |
+| `make image-tag-version GCP_PROJECT_ID=... VERSION=v1.2.3` | Artifact Registry の `IMAGE_TAG`（既定は HEAD のコミットの SHA）のイメージに、リリースのタグを足す |
 | `make secret-update ENV=dev GCP_PROJECT_ID=... FILE=config.yaml` | 設定ファイルを Secret Manager に入れる（[configuration.md](./configuration.md)） |
 | `make tidy` | `go.mod` と `go.sum` を整理する |
 | `make clean` | ビルドの成果物を消す |
@@ -94,6 +95,7 @@ PR（`develop`・`main` 向き）で [.github/workflows/ci.yml](../.github/workf
 3. `main` の CD が prod にデプロイし、スモークテストが通ったら、次を行う。
    - 次のバージョンのタグを打つ。前のタグからの PR のラベルで決める（`breaking`: メジャー、`feat`: マイナー、それ以外: パッチ。ラベルは PR のタイトルから付く）。
    - GitHub リリースを作る。ノートは [.github/release.yml](../.github/release.yml) の見出しに振り分ける。
+   - prod の Artifact Registry のイメージ（コミットの SHA のタグ）に、同じバージョンのタグも付ける（`make image-tag-version`）。
    - `main` → `develop` の PR を作り、マージコミットでマージする（`develop` の履歴からもタグを辿れるようにするため）。自動でマージできないときは、PR が開いたまま残り、CD が失敗する。
 
 - 手でタグを push したときも、[.github/workflows/release.yml](../.github/workflows/release.yml) が GitHub リリースを作る。
