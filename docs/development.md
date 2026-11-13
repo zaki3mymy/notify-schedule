@@ -84,6 +84,22 @@ PR（`develop`・`main` 向き）で [.github/workflows/ci.yml](../.github/workf
 - GitHub の Environment（`develop`・`prod`）の secrets で、Workload Identity 連携で認証する。
 - 同じブランチのデプロイは順に行う（途中で取り消さない）。
 
+## リリース
+
+`develop` で開発し、`main` へのマージで prod にリリースする。バージョンは SemVer のタグ（`vX.Y.Z`）。
+
+1. Actions の画面で「Create release PR」（[.github/workflows/release-pr.yml](../.github/workflows/release-pr.yml)）を実行する。`develop` → `main` のリリース PR ができる（すでにあれば更新される）。
+   - タイトルは `release: <次のバージョン> (develop → main)`、本文はリリースノート。
+2. リリース PR を **「Create a merge commit」で** マージする（スカッシュすると、中身の PR がバージョンの計算に数えられなくなる）。
+3. `main` の CD が prod にデプロイし、スモークテストが通ったら、次を行う。
+   - 次のバージョンのタグを打つ。前のタグからの PR のラベルで決める（`breaking`: メジャー、`feat`: マイナー、それ以外: パッチ。ラベルは PR のタイトルから付く）。
+   - GitHub リリースを作る。ノートは [.github/release.yml](../.github/release.yml) の見出しに振り分ける。
+   - `main` → `develop` の PR を作り、マージコミットでマージする（`develop` の履歴からもタグを辿れるようにするため）。自動でマージできないときは、PR が開いたまま残り、CD が失敗する。
+
+- 手でタグを push したときも、[.github/workflows/release.yml](../.github/workflows/release.yml) が GitHub リリースを作る。
+- ワークフローの中身は [zaki3mymy/actions](https://github.com/zaki3mymy/actions) の再利用ワークフロー（`next-tag.yml`・`create-release.yml`・`release-pr.yml`・`back-merge.yml`）。
+- リリース PR と取り込みの PR は、GitHub App のトークンで作る（シークレットの `BACK_MERGE_APP_CLIENT_ID`・`BACK_MERGE_APP_PRIVATE_KEY`）。
+
 ## Dependabot
 
 [.github/dependabot.yml](../.github/dependabot.yml) で、次の更新 PR を週に1回作る。PR のタイトルは `chore(deps): ...` などの形にしている。
