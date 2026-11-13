@@ -61,6 +61,15 @@ jobs:
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
           token_format: access_token
 
+      # gcloud の出力（コンソールの URL など）にはプロジェクト番号が出るが、secrets にはないので伏せられない。
+      # ログは公開されるので、プロジェクト番号もマスクに登録する
+      - name: Mask project number
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          number=$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')
+          echo "::add-mask::${number}"
+
       # イメージのタグはコミットの SHA。Artifact Registry のタグは上書きできないので、
       # 同じコミットを出し直すとき（手で動かしたときなど）は、build と push を飛ばす
       - name: Set image name
