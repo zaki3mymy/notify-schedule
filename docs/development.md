@@ -48,6 +48,7 @@ make build
 | `make tf-init ENV=dev TF_STATE_BUCKET=...` | Terraform を初期化する（Google Cloud へのログインが要る） |
 | `make tf-plan ENV=dev GCP_PROJECT_ID=...` | Terraform の plan（先に `tf-init`。Cloud Run Job のイメージは `IMAGE_TAG` のタグ。既定は HEAD のコミットの SHA） |
 | `make tf-apply ENV=dev GCP_PROJECT_ID=...` | Terraform の apply（先に `tf-init`。`TF_APPLY_ARGS` でオプションを足せる） |
+| `make smoke-test GCP_PROJECT_ID=...` | デプロイした Cloud Run Job を `--dry-run` で実行し、成功するかを確かめる |
 | `make secret-update ENV=dev GCP_PROJECT_ID=... FILE=config.yaml` | 設定ファイルを Secret Manager に入れる（[configuration.md](./configuration.md)） |
 | `make tidy` | `go.mod` と `go.sum` を整理する |
 | `make clean` | ビルドの成果物を消す |
@@ -78,6 +79,7 @@ PR（`develop`・`main` 向き）で [.github/workflows/ci.yml](../.github/workf
 2. コンテナイメージをビルドし、Artifact Registry に push する（`make image`・`make image-push`）。
    - タグはコミットの SHA。タグは上書きできないので、同じコミットのイメージがもうあるときは、ビルドと push を飛ばす。
 3. `make tf-init`・`make tf-apply` で、Terraform を apply する（承認は待たない。差分は PR の plan のコメントで確かめておく）。Cloud Run Job のイメージは、2 のコミットの SHA のタグにする。
+4. `make smoke-test` で、デプロイした Job を `--dry-run` で実行する（実際のカレンダーを読み、nandemo-oshirase には `dry_run` で送る）。失敗したら CD を失敗にする。
 
 - GitHub の Environment（`develop`・`prod`）の secrets で、Workload Identity 連携で認証する。
 - 同じブランチのデプロイは順に行う（途中で取り消さない）。
