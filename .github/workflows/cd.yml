@@ -1,0 +1,154 @@
+name: CD
+
+# develop・main への push で、CI を通したあと、コンテナイメージを Artifact Registry に push し、
+# terraform apply する。develop は dev、main は prod の環境に出す
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "flake.nix"
+      - "flake.lock"
+      - "Makefile"
+      - ".golangci.yml"
+      - "tf/**"
+      - "Containerfile"
+      - ".dockerignore"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同じブランチのデプロイは順に行う（途中で止めると state のロックが残ることがあるので、取り消さない）
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    # 呼ばれる側のジョブ（PR だけで動く plan のジョブも含む）が要る権限を渡す
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+  deploy:
+    needs: ci
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    name: Deploy
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'develop' }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_ENV: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
+      REGISTRY: asia-northeast1-docker.pkg.dev
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      # gcloud の出力（コンソールの URL など）にはプロジェクト番号が出るが、secrets にはないので伏せられない。
+      # ログは公開されるので、プロジェクト番号もマスクに登録する
+      - name: Mask project number
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          number=$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')
+          echo "::add-mask::${number}"
+
+      # イメージのタグはコミットの SHA。Artifact Registry のタグは上書きできないので、
+      # 同じコミットを出し直すとき（手で動かしたときなど）は、build と push を飛ばす
+      - name: Set image name
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: echo "IMAGE=${REGISTRY}/${GCP_PROJECT_ID}/apps/notify-schedule:${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      - name: Log in to Artifact Registry
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REGISTRY}"
+
+      - name: Check image
+        id: image
+        run: |
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "イメージはもうあるので、build と push を飛ばします"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push image
+        if: steps.image.outputs.exists != 'true'
+        run: make image image-push CONTAINER=docker IMAGE="$IMAGE"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~1.17.0"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        env:
+          TF_STATE_BUCKET: ${{ secrets.GCP_TFSTATE_BUCKET }}
+        run: make tf-init ENV="$TF_ENV" TF_STATE_BUCKET="$TF_STATE_BUCKET"
+
+      # ログは公開されるが、プロジェクト ID は secrets から渡しているので、ログでは伏せられる
+      - name: Terraform apply
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        # Cloud Run Job は、上で push した（またはもうあった）コミットの SHA のタグのイメージで動かす
+        run: make tf-apply ENV="$TF_ENV" GCP_PROJECT_ID="$GCP_PROJECT_ID" IMAGE_TAG="$GITHUB_SHA" TF_APPLY_ARGS="-auto-approve -no-color"
+
+      # デプロイした Job を --dry-run で実行する（実際のカレンダーを読み、nandemo-oshirase には dry_run で送る。LINE には送らない）。
+      # gcloud はランナーに入っているものを使う
+      - name: Smoke test
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: make smoke-test GCP_PROJECT_ID="$GCP_PROJECT_ID"
+
+  # 本番（main）のデプロイが成功したら、次のバージョンのタグを打つ。
+  # バージョンは前のタグからの PR のラベルで決める（breaking: メジャー、feat: マイナー、それ以外: パッチ）。
+  # 数える PR がないときは、タグを打たない（出力が空）
+  tag:
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    uses: zaki3mymy/actions/.github/workflows/next-tag.yml@main
+
+  # GITHUB_TOKEN で push したタグでは release.yml が起動しないので、ここから GitHub リリースを作る
+  release:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    permissions:
+      contents: write
+    uses: zaki3mymy/actions/.github/workflows/create-release.yml@main
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+
+  # main を develop に取り込む（main → develop の PR を作り、マージコミットでマージする）。
+  # タグを打たなかったときも、main のコミットは取り込む
+  back-merge:
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    uses: zaki3mymy/actions/.github/workflows/back-merge.yml@main
+    secrets:
+      BACK_MERGE_APP_CLIENT_ID: ${{ secrets.BACK_MERGE_APP_CLIENT_ID }}
+      BACK_MERGE_APP_PRIVATE_KEY: ${{ secrets.BACK_MERGE_APP_PRIVATE_KEY }}

@@ -1,0 +1,28 @@
+# ビルドの成果物と、make で入れたツール
+/bin/
+
+# 本物の設定ファイル（API キーやカレンダーの ID を含む）。例は config.example.yaml
+/config.yaml
+*.local.yaml
+
+# 手元で動かすときの環境変数。例は .env.example
+/.env
+
+# Terraform（.terraform.lock.hcl はコミットする）
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# テスト
+*.test
+*.out
+coverage.*
+
+# direnv（nix develop のキャッシュ）
+.direnv/
+
+# IDE・OS
+.idea/
+.vscode/
+.DS_Store

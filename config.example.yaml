@@ -1,0 +1,20 @@
+# notify-schedule の設定ファイルの例（値はダミー）。
+# 項目の説明は docs/configuration.md を参照。
+#
+# 本物の設定ファイル（config.yaml）はコミットしない（.gitignore に入れてある）。
+# デプロイ先では Secret Manager に置き、ファイルとしてマウントする。
+
+# 対象日（「明日」など）を決めるタイムゾーン。省略すると Asia/Tokyo
+timezone: Asia/Tokyo
+
+# 通知先の nandemo-oshirase
+nandemo_oshirase:
+  endpoint: https://xxxxxxxxxx.execute-api.ap-northeast-1.amazonaws.com/dev/notify
+  api_key: your-api-key
+
+# 予定を取得するカレンダー（1件以上）。label は通知のときに予定に添える名前
+calendars:
+  - id: xxxxxxxxxxxxxxxx@group.calendar.google.com
+    label: 家族
+  - id: someone@gmail.com
+    label: 仕事

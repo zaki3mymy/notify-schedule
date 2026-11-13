@@ -1,0 +1,18 @@
+name: Create release PR
+run-name: "Create release PR"
+
+# develop → main のリリース PR を作る（すでにあれば更新する）。リリースすると決めたときに、Actions の画面から手で実行する
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-pr:
+    permissions:
+      contents: write
+    uses: zaki3mymy/actions/.github/workflows/release-pr.yml@main
+    secrets:
+      BACK_MERGE_APP_CLIENT_ID: ${{ secrets.BACK_MERGE_APP_CLIENT_ID }}
+      BACK_MERGE_APP_PRIVATE_KEY: ${{ secrets.BACK_MERGE_APP_PRIVATE_KEY }}

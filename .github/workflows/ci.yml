@@ -1,0 +1,235 @@
+name: CI
+
+# lint・テスト・ビルドを、flake.nix の devShell の中で make のターゲットとして実行する。
+# make だけを実行するとランナーにあるツールが使われ、ローカルとバージョンがずれるため、
+# nix develop -c で flake.lock に固定したツールを使う
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "flake.nix"
+      - "flake.lock"
+      - "Makefile"
+      - ".golangci.yml"
+      - "tf/**"
+      - "Containerfile"
+      - ".dockerignore"
+      - ".github/workflows/**"
+  # develop・main への push では、CD（cd.yml）から呼ばれる
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  # キャッシュは develop・main への push で CD から呼ばれたとき（と、手で CD を動かしたとき）だけ保存する。
+  # PR で作ったキャッシュはその PR でしか使えず、リポジトリのキャッシュの容量（10GB）を埋めるだけなので、
+  # PR では develop・main のキャッシュを読むだけにする
+  SAVE_CACHE: ${{ github.event_name != 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    name: Lint, test and build
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # flakes は既定で有効。github: の入力の取得には github.token を使う
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+
+      # nix のストア（go・golangci-lint などのツール）をキャッシュする。
+      # ツールが変わるのは flake.nix・flake.lock が変わったときだけなので、それをキーにする。
+      # キーが一致しないときは、前のキャッシュから戻して差分だけを取得する
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: ${{ env.SAVE_CACHE }}
+
+      # Go のモジュール・ビルドのキャッシュと、golangci-lint の解析のキャッシュ。
+      # Go のバージョン（flake.lock）が変わるとビルドのキャッシュが使えなくなるので、キーに含める。
+      # 保存は最後のステップで、SAVE_CACHE のときだけ行う
+      - name: Restore Go cache
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'flake.lock') }}
+          restore-keys: go-${{ runner.os }}-
+
+      # devShell の用意（ツールの取得）を、lint などのステップと分けて時間を見られるようにする
+      - name: Set up dev shell
+        run: nix develop -c go version
+
+      - name: Lint
+        run: nix develop -c make lint
+
+      - name: Lint workflows
+        run: nix develop -c actionlint
+
+      # terraform は flake に入れていない（ソースからのビルドに時間がかかるため）。tflint は flake のものを使う
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~1.17.0"
+          terraform_wrapper: false
+
+      - name: Lint and validate Terraform
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tf-plugin-cache
+        run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          nix develop -c make tf-lint tf-validate
+
+      - name: Test
+        run: nix develop -c make test
+
+      # カバレッジを、ジョブのサマリー（Actions の実行結果の画面）と、HTML のレポート（成果物）に残す
+      - name: Coverage report
+        run: |
+          nix develop -c make cover-html
+          total=$(nix develop -c go tool cover -func=coverage.out | tail -n 1 | awk '{print $NF}')
+          {
+            echo "## Coverage: ${total}"
+            echo
+            echo "<details><summary>関数ごとのカバレッジ</summary>"
+            echo
+            echo '```'
+            nix develop -c go tool cover -func=coverage.out
+            echo '```'
+            echo
+            echo "</details>"
+            echo
+            echo "HTML のレポートは、この実行の成果物（coverage-report）にある。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.html
+          retention-days: 30
+
+      - name: Build
+        run: nix develop -c make build
+
+      - name: Save Go cache
+        if: env.SAVE_CACHE == 'true' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+  # コンテナイメージがビルドできることを確かめる（push はしない。push は CD で行う）
+  image:
+    runs-on: ubuntu-latest
+    name: Build container image
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build image
+        run: make image CONTAINER=docker
+
+  # PR の向き先の環境（develop 向きは dev、main 向きは prod）で plan し、結果を PR にコメントする
+  terraform-plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    name: Terraform plan
+    environment: ${{ github.base_ref == 'main' && 'prod' || 'develop' }}
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    env:
+      TF_ENV: ${{ github.base_ref == 'main' && 'prod' || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # このジョブは terraform と make だけを使うので、nix は使わない
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~1.17.0"
+          terraform_wrapper: false
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Terraform init
+        env:
+          TF_STATE_BUCKET: ${{ secrets.GCP_TFSTATE_BUCKET }}
+        run: make tf-init ENV="$TF_ENV" TF_STATE_BUCKET="$TF_STATE_BUCKET"
+
+      - name: Terraform plan
+        id: plan
+        # pipefail を有効にして、plan の失敗を tee で握りつぶさない
+        shell: bash
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          # イメージは PR の head のコミットのタグにする（plan ではイメージがあるかは確かめない）
+          IMAGE_TAG: ${{ github.event.pull_request.head.sha }}
+        run: make tf-plan ENV="$TF_ENV" GCP_PROJECT_ID="$GCP_PROJECT_ID" IMAGE_TAG="$IMAGE_TAG" 2>&1 | tee "$RUNNER_TEMP/plan.txt"
+
+      - name: Comment plan result
+        # plan が失敗したときも、エラーの内容を PR に残す
+        if: always() && (steps.plan.outcome == 'success' || steps.plan.outcome == 'failure')
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PLAN_FILE: ${{ runner.temp }}/plan.txt
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        with:
+          script: |
+            const fs = require('fs')
+            let plan = fs.existsSync(process.env.PLAN_FILE)
+              ? fs.readFileSync(process.env.PLAN_FILE, 'utf8')
+              : '(plan の出力がありません)'
+
+            // 公開リポジトリなので、プロジェクト ID は伏せ、既存リソースの読み込みの行（ID が並ぶ）は除く
+            if (process.env.GCP_PROJECT_ID) {
+              plan = plan.split(process.env.GCP_PROJECT_ID).join('<project_id>')
+            }
+            const noise = /^\S.*: (Refreshing state\.\.\.|Reading\.\.\.|Read complete after|Preparing import\.\.\.)/
+            plan = plan.split('\n').filter((line) => !noise.test(line)).join('\n').trim()
+
+            // PR のコメントは 65,536 文字までなので、長すぎるときは末尾を残す
+            const limit = 60000
+            if (plan.length > limit) {
+              plan = '... (先頭を省略。全文は Actions のログを参照) ...\n' + plan.slice(-limit)
+            }
+
+            let body = `## Terraform plan (${process.env.TF_ENV})\n\n`
+            if (process.env.PLAN_OUTCOME !== 'success') {
+              body += ':x: **plan に失敗しました。**\n\n'
+            }
+            if (process.env.PLAN_OUTCOME === 'success' && plan.includes('No changes.')) {
+              body += 'No changes.'
+            } else {
+              body += ['<details>', '<summary>Show plan</summary>', '', '```', plan, '```', '', '</details>'].join('\n')
+            }
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body,
+            })

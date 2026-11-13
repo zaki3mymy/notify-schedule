@@ -1,0 +1,72 @@
+# Dependabot のバージョンアップデート（新しいバージョンが出たら更新 PR を作る）
+# 脆弱性の修正 PR（security updates）は、リポジトリの設定で有効にしている
+# PR の向き先は既定でデフォルトブランチ（develop）
+#
+# PR のタイトル（コミットメッセージ）は commit-message で Conventional Commits の形に固定する。
+# 指定しないと Dependabot は最近のコミットの書き方を真似るため、type のない
+# 「Bump ... from ... to ...」になることがあり、PR のタイトルからラベルを付けるワークフロー（label-pr-by-title.yml）で失敗する。
+#   本番の依存関係: chore(deps): bump ...
+#   開発用の依存関係: chore(deps-dev): bump ...
+version: 2
+updates:
+  # GitHub Actions（SHA で固定したアクションも、SHA とバージョンのコメントを更新する）
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
+  # Go のモジュール（go.mod・go.sum）
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # マイナー・パッチは1つの PR にまとめる（メジャーは個別の PR）
+      go-minor-and-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
+  # Terraform のプロバイダ（required_providers と .terraform.lock.hcl）
+  - package-ecosystem: "terraform"
+    directories:
+      - "/tf/envs/dev"
+      - "/tf/envs/prod"
+    schedule:
+      interval: "weekly"
+    groups:
+      terraform-providers:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
+  # コンテナのベースイメージ（Containerfile の FROM。ダイジェストで固定したものも更新する）
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
+  # 開発のツール（flake.lock の入力。nixpkgs を進めると go・golangci-lint などがまとめて新しくなる）
+  - package-ecosystem: "nix"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
