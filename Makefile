@@ -68,8 +68,7 @@ tf-validate: ## Terraform を検証する（backend には接続しない）
 # 以下は Google Cloud にログインしてから使う（ENV=dev か prod）。
 # Cloud Run Job のイメージは、Artifact Registry の IMAGE_TAG（既定は HEAD のコミットの SHA）のタグを使う
 IMAGE_TAG      ?= $(shell git rev-parse HEAD)
-REGISTRY_REPO   = asia-northeast1-docker.pkg.dev/$(GCP_PROJECT_ID)/apps/notify-schedule
-REGISTRY_IMAGE  = $(REGISTRY_REPO):$(IMAGE_TAG)
+REGISTRY_IMAGE  = asia-northeast1-docker.pkg.dev/$(GCP_PROJECT_ID)/apps/notify-schedule:$(IMAGE_TAG)
 TF_VARS         = -var="project_id=$(GCP_PROJECT_ID)" -var="image=$(REGISTRY_IMAGE)"
 
 .PHONY: tf-init
@@ -91,11 +90,6 @@ tf-apply: ## Terraform の apply（ENV・GCP_PROJECT_ID が要る。先に tf-in
 smoke-test: ## デプロイした Cloud Run Job を --dry-run で実行し、成功するかを確かめる（GCP_PROJECT_ID が要る）
 	$(call require,GCP_PROJECT_ID)
 	gcloud run jobs execute notify-schedule --project=$(GCP_PROJECT_ID) --region=asia-northeast1 --args=--dry-run --wait
-
-.PHONY: image-tag-version
-image-tag-version: ## Artifact Registry の IMAGE_TAG のイメージに、リリースのタグ（VERSION）を足す（GCP_PROJECT_ID・VERSION が要る）
-	$(call require,GCP_PROJECT_ID VERSION)
-	gcloud artifacts docker tags add $(REGISTRY_IMAGE) $(REGISTRY_REPO):$(VERSION)
 
 .PHONY: secret-update
 secret-update: ## 設定ファイルを Secret Manager に入れ、古いバージョンを消す（ENV・GCP_PROJECT_ID・FILE が要る）
