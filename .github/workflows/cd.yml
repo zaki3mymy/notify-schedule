@@ -141,6 +141,35 @@ jobs:
     with:
       tag: ${{ needs.tag.outputs.tag }}
 
+  # prod の Artifact Registry のイメージ（コミットの SHA のタグ）に、リリースのタグ（例: v1.2.3）も付ける。
+  # イメージはデプロイの前に push するが、バージョンはデプロイの後に決まるので、ここで足す
+  image-tag:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    runs-on: ubuntu-latest
+    name: Tag image with version
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGISTRY: asia-northeast1-docker.pkg.dev
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Add version tag
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          VERSION: ${{ needs.tag.outputs.tag }}
+        run: |
+          image="${REGISTRY}/${GCP_PROJECT_ID}/apps/notify-schedule"
+          gcloud artifacts docker tags add "${image}:${GITHUB_SHA}" "${image}:${VERSION}"
+
   # main を develop に取り込む（main → develop の PR を作り、マージコミットでマージする）。
   # タグを打たなかったときも、main のコミットは取り込む
   back-merge:

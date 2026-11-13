@@ -54,12 +54,11 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 ふつうは、問題の PR を develop で revert し、リリースする（いつもの流れで直す）。
 
-急いで戻すときは、Job のイメージを前のリリースのものに差し替える。イメージのタグはコミットの SHA なので、前のリリースのタグのコミットを使う。
+急いで戻すときは、Job のイメージを前のリリースのものに差し替える。prod のイメージには、コミットの SHA のタグに加えて、リリースのタグ（`v1.2.3` など）も付いている。
 
 ```shell
-sha=$(git rev-list -n 1 v1.2.3)   # 戻したいリリースのタグ
 gcloud run jobs update notify-schedule --project=<プロジェクト ID> --region=asia-northeast1 \
-  --image=asia-northeast1-docker.pkg.dev/<プロジェクト ID>/apps/notify-schedule:$sha
+  --image=asia-northeast1-docker.pkg.dev/<プロジェクト ID>/apps/notify-schedule:v1.2.3   # 戻したいリリース
 ```
 
 - これは Terraform の外での変更なので、次の CD の apply で `main` のイメージに戻る。差し替えたあとは、revert のリリースまで `main` にマージしない。
