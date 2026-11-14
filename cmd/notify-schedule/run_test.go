@@ -76,6 +76,7 @@ type harness struct {
 	notifierCreated bool
 	gotDryRun       bool
 	gotNandemo      config.NandemoOshirase
+	hiddenConfig    *config.Config
 	stdout          bytes.Buffer
 	stderr          bytes.Buffer
 }
@@ -116,6 +117,7 @@ func (h *harness) run(args ...string) int {
 			h.gotNandemo, h.gotDryRun = cfg, dryRun
 			return h.notifier, nil
 		},
+		hideInTraces: func(cfg config.Config) { h.hiddenConfig = &cfg },
 	})
 }
 
@@ -459,6 +461,30 @@ func TestRunRecordsSpan(t *testing.T) {
 		}
 		if spans := rec.Ended(); len(spans) != 0 {
 			t.Errorf("span の数 = %d, want 0", len(spans))
+		}
+	})
+}
+
+func TestRunHidesConfigInTraces(t *testing.T) {
+	t.Run("設定を読めたら、外部の API を呼ぶ前に伏せる", func(t *testing.T) {
+		h := newHarness(t, validConfig)
+		if code := h.run("--validate-config"); code != exitOK {
+			t.Fatalf("run() = %d, want %d", code, exitOK)
+		}
+		if h.hiddenConfig == nil {
+			t.Fatal("hideInTraces が呼ばれていない")
+		}
+		if len(h.hiddenConfig.Calendars) != 2 || h.hiddenConfig.NandemoOshirase.Endpoint != "https://example.com/notify" {
+			t.Errorf("伏せる設定 = %+v", h.hiddenConfig)
+		}
+	})
+	t.Run("設定に不備があれば呼ばない", func(t *testing.T) {
+		h := newHarness(t, "")
+		if code := h.run(); code != exitInvalid {
+			t.Fatalf("run() = %d, want %d", code, exitInvalid)
+		}
+		if h.hiddenConfig != nil {
+			t.Error("設定を読めていないのに hideInTraces が呼ばれた")
 		}
 	})
 }

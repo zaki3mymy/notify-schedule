@@ -40,7 +40,8 @@ const (
 // 送信先と認証情報の環境変数がどちらもないとき（手元やテスト）は、何も送らない。
 // 片方だけのときは、設定の誤りなのでエラーにする。
 // service.name などのリソースの属性は、環境変数 OTEL_SERVICE_NAME・OTEL_RESOURCE_ATTRIBUTES から読む。
-func setupTracing(ctx context.Context, lookupEnv config.LookupEnv) (func(context.Context) error, error) {
+// r が nil でなければ、送る前に span の文字列の伏せる値を置き換える（redact.go）。
+func setupTracing(ctx context.Context, lookupEnv config.LookupEnv, r *redactor) (func(context.Context) error, error) {
 	noop := func(context.Context) error { return nil }
 
 	endpoint, hasEndpoint := lookupEnv(envOTLPEndpoint)
@@ -70,8 +71,12 @@ func setupTracing(ctx context.Context, lookupEnv config.LookupEnv) (func(context
 		return noop, fmt.Errorf("トレースのリソースを作れませんでした: %w", err)
 	}
 
+	var spanExporter sdktrace.SpanExporter = exporter
+	if r != nil {
+		spanExporter = &redactingExporter{next: exporter, r: r}
+	}
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
+		sdktrace.WithBatcher(spanExporter),
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)

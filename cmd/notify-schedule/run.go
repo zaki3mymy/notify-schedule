@@ -39,6 +39,9 @@ type env struct {
 	// newSource・newNotifier は、検証が済んだあとにだけ呼ぶ（設定に不備があれば外部の API に触れない）
 	newSource   func(ctx context.Context) (usecase.ScheduleSource, error)
 	newNotifier func(cfg config.NandemoOshirase, dryRun bool) (usecase.Notifier, error)
+	// hideInTraces は、設定のうちトレースに出したくない値（カレンダーの ID など）を伏せるようにする。
+	// 設定を読めたら、外部の API を呼ぶ前に呼ぶ
+	hideInTraces func(cfg config.Config)
 }
 
 // run は、フラグと設定を検証してから、ユースケースを実行する。戻り値は終了コード。
@@ -90,6 +93,8 @@ func run(ctx context.Context, args []string, e env) int {
 		logger.Error("フラグか設定に不備があります。予定の取得も通知もせずに終了します", "problems", problemList(problems))
 		return exitInvalid
 	}
+
+	e.hideInTraces(cfg)
 
 	if opts.validateConfig {
 		logger.Info("フラグと設定に不備はありません", "date", date.String(), "calendars", len(calendars))

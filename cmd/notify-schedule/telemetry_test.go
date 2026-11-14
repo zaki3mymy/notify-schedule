@@ -38,7 +38,7 @@ func envMap(m map[string]string) func(string) (string, bool) {
 type otlpRequest struct {
 	path          string
 	authorization string
-	bodySize      int
+	body          []byte
 }
 
 // newOTLPServer は、受け取ったリクエストを記録する偽の OTLP の受け口を作る。
@@ -51,7 +51,7 @@ func newOTLPServer(t *testing.T) (*httptest.Server, func() []otlpRequest) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		got = append(got, otlpRequest{path: r.URL.Path, authorization: r.Header.Get("Authorization"), bodySize: len(b)})
+		got = append(got, otlpRequest{path: r.URL.Path, authorization: r.Header.Get("Authorization"), body: b})
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -79,7 +79,7 @@ func TestSetupTracingSendsSpans(t *testing.T) {
 			shutdown, err := setupTracing(context.Background(), envMap(map[string]string{
 				envOTLPEndpoint: tt.endpoint(srv.URL),
 				envOTLPAuth:     testOTLPAuth,
-			}))
+			}), nil)
 			if err != nil {
 				t.Fatalf("setupTracing(): %v", err)
 			}
@@ -100,7 +100,7 @@ func TestSetupTracingSendsSpans(t *testing.T) {
 			if reqs[0].authorization != testOTLPAuth {
 				t.Errorf("Authorization = %q, want %q", reqs[0].authorization, testOTLPAuth)
 			}
-			if reqs[0].bodySize == 0 {
+			if len(reqs[0].body) == 0 {
 				t.Error("本文が空")
 			}
 			// 呼び出し先にトレースの ID を引き継ぐ
@@ -115,7 +115,7 @@ func TestSetupTracingWithoutEnvSendsNothing(t *testing.T) {
 	restoreOTelGlobals(t)
 	before := otel.GetTracerProvider()
 
-	shutdown, err := setupTracing(context.Background(), envMap(nil))
+	shutdown, err := setupTracing(context.Background(), envMap(nil), nil)
 	if err != nil {
 		t.Fatalf("setupTracing(): %v", err)
 	}
@@ -141,7 +141,7 @@ func TestSetupTracingInvalidEnv(t *testing.T) {
 			restoreOTelGlobals(t)
 			before := otel.GetTracerProvider()
 
-			shutdown, err := setupTracing(context.Background(), envMap(tt.env))
+			shutdown, err := setupTracing(context.Background(), envMap(tt.env), nil)
 			if err == nil {
 				t.Fatal("setupTracing() がエラーを返さない")
 			}

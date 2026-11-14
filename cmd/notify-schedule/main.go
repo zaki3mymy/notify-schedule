@@ -22,18 +22,21 @@ func main() {
 
 	// トレースの準備に失敗しても、通知は止めない（ログに出して、トレースなしで続ける）
 	logger := newLogger(os.Stdout)
-	shutdownTracing, err := setupTracing(ctx, os.LookupEnv)
+	// トレースに出したくない値（カレンダーの ID など）は、設定を読んだあとに run が足す
+	redact := &redactor{}
+	shutdownTracing, err := setupTracing(ctx, os.LookupEnv, redact)
 	if err != nil {
 		logger.Warn("トレースを送る準備ができませんでした。トレースなしで続けます", "error", err.Error())
 	}
 
 	code := run(ctx, os.Args[1:], env{
-		lookupEnv:   os.LookupEnv,
-		now:         time.Now,
-		stdout:      os.Stdout,
-		stderr:      os.Stderr,
-		newSource:   newGoogleCalendarSource,
-		newNotifier: newNandemoOshiraseNotifier,
+		lookupEnv:    os.LookupEnv,
+		now:          time.Now,
+		stdout:       os.Stdout,
+		stderr:       os.Stderr,
+		newSource:    newGoogleCalendarSource,
+		newNotifier:  newNandemoOshiraseNotifier,
+		hideInTraces: redact.addConfig,
 	})
 	stop()
 

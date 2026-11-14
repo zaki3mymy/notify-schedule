@@ -36,3 +36,4 @@ Collector をサイドカーとして挟まない理由：
 - 送信先と認証ヘッダーの値は、環境変数で受け取る（[configuration.md](./configuration.md#環境変数)）。どちらもないときは送らない。
 - nandemo-oshirase には `traceparent` ヘッダーでトレースの ID を引き継ぐ（W3C Trace Context）。nandemo-oshirase 側がそれを引き継げば、nandemo-oshirase の span も同じトレースにつながる。
 - Google カレンダーの API のクライアントは、内部で `otelhttp` を使っているので、TracerProvider を設定するだけで HTTP の呼び出しの span が出る。
+- トレースに出したくない値（カレンダーの ID、nandemo-oshirase のエンドポイントのホスト、API キー）は、送る直前に、span の名前・属性・イベント・status の文字列からまとめて置き換える（[cmd/notify-schedule/redact.go](../cmd/notify-schedule/redact.go)）。HTTP の span は `url.full` にリクエストの URL をそのまま入れ、エラーの本文にも URL が入ることがあるので、入る場所を1つずつ追うのではなく、送る前に置き換える。伏せる値は設定を読んだあとにわかるので、`run` が設定を読んだところで足す。
