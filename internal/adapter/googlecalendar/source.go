@@ -13,6 +13,10 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
 
@@ -21,6 +25,9 @@ import (
 
 // pageSize は、1回のリクエストで取得する予定の数（Calendar API の上限は 2500）。
 const pageSize = 250
+
+// tracerName は、このパッケージが作る span の計装の名前。
+const tracerName = "github.com/zaki3mymy/notify-schedule/internal/adapter/googlecalendar"
 
 // Source は、Google Calendar API で予定を取得する。
 type Source struct {
@@ -45,6 +52,10 @@ func New(ctx context.Context, opts ...option.ClientOption) (*Source, error) {
 // 失敗したカレンダーのラベルをすべて含むエラーを返す（エラーにはカレンダーの ID を含めない。
 // ID はメールアドレスのことがあるため）。
 func (s *Source) Fetch(ctx context.Context, cals []domain.Calendar, d domain.Date) (domain.DailySchedule, error) {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "fetch_schedule",
+		trace.WithAttributes(attribute.Int("schedule.calendars", len(cals))))
+	defer span.End()
+
 	schedule := domain.DailySchedule{Date: d}
 	var errs []error
 	for _, cal := range cals {
@@ -56,13 +67,31 @@ func (s *Source) Fetch(ctx context.Context, cals []domain.Calendar, d domain.Dat
 		schedule.Events = append(schedule.Events, events...)
 	}
 	if len(errs) > 0 {
+		span.SetStatus(codes.Error, fmt.Sprintf("%d 件のカレンダーの予定を取得できませんでした", len(errs)))
 		return domain.DailySchedule{}, errors.Join(errs...)
 	}
+	span.SetAttributes(attribute.Int("schedule.events", len(schedule.Events)))
 	return schedule, nil
 }
 
 // fetchCalendar は、1つのカレンダーから d の予定を取得する。
-func (s *Source) fetchCalendar(ctx context.Context, cal domain.Calendar, d domain.Date) ([]domain.Event, error) {
+//
+// カレンダーごとに span を作る。カレンダーの ID はメールアドレスのことがあるので、span には
+// ラベルだけを付ける。失敗したときも、エラーの本文（URL に ID を含むことがある）は記録せず、
+// エラーの型だけを付ける。
+func (s *Source) fetchCalendar(ctx context.Context, cal domain.Calendar, d domain.Date) (events []domain.Event, err error) {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "fetch_calendar",
+		trace.WithAttributes(attribute.String("calendar.label", cal.Label)))
+	defer func() {
+		if err != nil {
+			span.SetAttributes(attribute.String("error.type", fmt.Sprintf("%T", err)))
+			span.SetStatus(codes.Error, "予定を取得できませんでした")
+		} else {
+			span.SetAttributes(attribute.Int("calendar.events", len(events)))
+		}
+		span.End()
+	}()
+
 	loc := d.Location()
 	call := s.svc.Events.List(cal.ID).
 		// 繰り返しの予定を、1回ずつの予定に展開する（orderBy=startTime を使うのに必要）
@@ -73,8 +102,7 @@ func (s *Source) fetchCalendar(ctx context.Context, cal domain.Calendar, d domai
 		TimeZone(loc.String()).
 		MaxResults(pageSize)
 
-	var events []domain.Event
-	err := call.Pages(ctx, func(page *calendar.Events) error {
+	err = call.Pages(ctx, func(page *calendar.Events) error {
 		for _, item := range page.Items {
 			if item.Status == "cancelled" {
 				continue

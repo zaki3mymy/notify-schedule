@@ -94,6 +94,7 @@ PR（`develop`・`main` 向き）で [.github/workflows/ci.yml](../.github/workf
 3. `main` の CD が prod にデプロイし、スモークテストが通ったら、次を行う。
    - 次のバージョンのタグを打つ。前のタグからの PR のラベルで決める（`breaking`: メジャー、`feat`: マイナー、それ以外: パッチ。ラベルは PR のタイトルから付く）。
    - GitHub リリースを作る。ノートは [.github/release.yml](../.github/release.yml) の見出しに振り分ける。
+   - prod の Artifact Registry のイメージ（コミットの SHA のタグ）に、同じバージョンのタグも付ける。
    - `main` → `develop` の PR を作り、マージコミットでマージする（`develop` の履歴からもタグを辿れるようにするため）。自動でマージできないときは、PR が開いたまま残り、CD が失敗する。
 
 - 手でタグを push したときも、[.github/workflows/release.yml](../.github/workflows/release.yml) が GitHub リリースを作る。

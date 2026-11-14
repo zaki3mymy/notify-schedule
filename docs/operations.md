@@ -48,18 +48,36 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 ログの形は [usage.md](./usage.md#ログ) を参照。終了コードが `1`（取得や通知の失敗）のときは、Job が1回だけ再実行する。
 
+### トレース
+
+実行ごとのトレースは Grafana Cloud で見る。Grafana の Explore で、データソース Tempo を選び、`service.name` が `notify-schedule` のものを探す。環境は `deployment.environment.name`（`dev`・`prod`）で絞り込める。
+
+1回の実行は、次の span になる。失敗したところの span は、status が Error になる。
+
+```
+notify-schedule        1回の実行（schedule.date・schedule.calendars・schedule.events・notify.messages・notify.dry_run）
+├─ fetch_schedule      予定の取得（schedule.calendars・schedule.events）
+│  └─ fetch_calendar   カレンダーごとの取得（calendar.label・calendar.events）
+│     └─ HTTP GET      Google Calendar API の呼び出し
+└─ notify              通知（notify.messages・notify.dry_run）。予定がなく通知しないときは出ない
+   └─ POST /notify     nandemo-oshirase の呼び出し（この下に nandemo-oshirase の span がつく）
+```
+
+カレンダーの ID は span に出さない（ラベルで見分ける）。HTTP の span の URL（`url.full`）やエラーの本文に入るカレンダーの ID は `{calendarId}`、nandemo-oshirase のエンドポイントのホストは `{nandemo-oshirase}` に置き換えて送っている。
+
+トレースの送り方は [architecture.md](./architecture.md#トレースの送り方) を参照。
+
 ## 切り戻し
 
 ### アプリを前のリリースに戻す
 
 ふつうは、問題の PR を develop で revert し、リリースする（いつもの流れで直す）。
 
-急いで戻すときは、Job のイメージを前のリリースのものに差し替える。イメージのタグはコミットの SHA なので、前のリリースのタグのコミットを使う。
+急いで戻すときは、Job のイメージを前のリリースのものに差し替える。prod のイメージには、コミットの SHA のタグに加えて、リリースのタグ（`v1.2.3` など）も付いている。
 
 ```shell
-sha=$(git rev-list -n 1 v1.2.3)   # 戻したいリリースのタグ
 gcloud run jobs update notify-schedule --project=<プロジェクト ID> --region=asia-northeast1 \
-  --image=asia-northeast1-docker.pkg.dev/<プロジェクト ID>/apps/notify-schedule:$sha
+  --image=asia-northeast1-docker.pkg.dev/<プロジェクト ID>/apps/notify-schedule:v1.2.3   # 戻したいリリース
 ```
 
 - これは Terraform の外での変更なので、次の CD の apply で `main` のイメージに戻る。差し替えたあとは、revert のリリースまで `main` にマージしない。

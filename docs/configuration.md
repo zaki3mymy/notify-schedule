@@ -7,8 +7,14 @@
 | 環境変数 | 必須 | 内容 |
 |---|---|---|
 | `NOTIFY_SCHEDULE_CONFIG` | はい | 設定ファイルのパス |
+| `GRAFANA_CLOUD_OTLP_ENDPOINT` | いいえ | トレースの送信先（Grafana Cloud の OTLP の URL に `/otlp` を付けたもの）。後ろに `/v1/traces` を付けて送る |
+| `GRAFANA_CLOUD_OTLP_AUTH` | いいえ | トレースを送るときの Authorization ヘッダーの値（`Basic <base64(スタックの ID:トークン)>`） |
+| `OTEL_SERVICE_NAME` | いいえ | トレースの `service.name`（既定は `notify-schedule`） |
+| `OTEL_RESOURCE_ATTRIBUTES` | いいえ | トレースのリソースの属性（デプロイ先では `deployment.environment.name` に `dev`・`prod` を付ける） |
 
-手元で動かすときは、[.env.example](../.env.example) を `.env` にコピーして使う（`.env` はコミットしない。direnv を使っていれば自動で読み込まれる）。デプロイ先では、Cloud Run Job の設定で渡す。
+トレースは、`GRAFANA_CLOUD_OTLP_ENDPOINT` と `GRAFANA_CLOUD_OTLP_AUTH` の両方があるときだけ送る。どちらもなければ送らない（手元で動かすときは、ふつうは設定しない）。片方だけのときは、設定の誤りとして警告のログを出し、トレースなしで続ける（通知は止めない）。
+
+手元で動かすときは、[.env.example](../.env.example) を `.env` にコピーして使う（`.env` はコミットしない。direnv を使っていれば自動で読み込まれる）。デプロイ先では、Cloud Run Job の設定で渡す。`GRAFANA_CLOUD_OTLP_AUTH` は、プロジェクトの Secret Manager の `grafana-otlp-auth`（このリポジトリの外で用意している）から読むので、値は Terraform の state にも Job の設定にも残らない。
 
 ## 設定ファイル
 

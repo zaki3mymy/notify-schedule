@@ -13,6 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/zaki3mymy/notify-schedule/internal/domain"
 	"github.com/zaki3mymy/notify-schedule/internal/usecase"
 )
@@ -28,6 +36,7 @@ type recorded struct {
 	path        string
 	apiKey      string
 	contentType string
+	traceparent string
 	body        map[string]any
 }
 
@@ -45,6 +54,7 @@ func newServer(t *testing.T, status int, body string) (*httptest.Server, *[]reco
 			path:        r.URL.Path,
 			apiKey:      r.Header.Get("x-api-key"),
 			contentType: r.Header.Get("Content-Type"),
+			traceparent: r.Header.Get("traceparent"),
 		}
 		if err := json.Unmarshal(b, &rec.body); err != nil {
 			t.Errorf("本文が JSON ではありません: %v (%s)", err, b)
@@ -260,4 +270,115 @@ func TestNew(t *testing.T) {
 			t.Errorf("Notifier の文字列表現に API キーが含まれている: %q", s)
 		}
 	}
+}
+
+func TestNotifyPropagatesTraceContext(t *testing.T) {
+	// 呼び出し元（cmd）と同じく、traceparent ヘッダーで引き継ぐ propagator を設定する
+	prop := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(prop) })
+
+	traceID := trace.TraceID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10}
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     trace.SpanID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
+		TraceFlags: trace.FlagsSampled,
+	}))
+
+	srv, got := newServer(t, http.StatusOK, `{"message": "ok"}`)
+	// HTTPClient を渡さない（既定のクライアントが traceparent を付けることを確かめる）
+	n := newNotifier(t, Config{Endpoint: srv.URL + "/notify", APIKey: testAPIKey})
+	if err := n.Notify(ctx, messages(t, "1通目")); err != nil {
+		t.Fatalf("Notify(): %v", err)
+	}
+
+	if len(*got) != 1 {
+		t.Fatalf("リクエストの数 = %d, want 1", len(*got))
+	}
+	if tp := (*got)[0].traceparent; !strings.Contains(tp, traceID.String()) {
+		t.Errorf("traceparent = %q, want トレースの ID %s を含む", tp, traceID)
+	}
+}
+
+// recordSpans は、テストの間、作られた span を記録する TracerProvider をグローバルに設定する。
+func recordSpans(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	prev := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+	rec := tracetest.NewSpanRecorder()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)))
+	return rec
+}
+
+func TestNotifyRecordsSpans(t *testing.T) {
+	t.Run("成功", func(t *testing.T) {
+		rec := recordSpans(t)
+		srv, _ := newServer(t, http.StatusOK, `{"message": "ok"}`)
+		// HTTPClient を渡さない（既定のクライアントの HTTP の span の名前を確かめる）
+		n := newNotifier(t, Config{Endpoint: srv.URL + "/notify", APIKey: testAPIKey, DryRun: true})
+		if err := n.Notify(context.Background(), messages(t, "1通目", "2通目")); err != nil {
+			t.Fatalf("Notify(): %v", err)
+		}
+
+		spans := rec.Ended()
+		if len(spans) != 2 {
+			t.Fatalf("span の数 = %d, want 2（notify と POST /notify）", len(spans))
+		}
+		// HTTP の span が先に終わる
+		httpSpan, notifySpan := spans[0], spans[1]
+		if notifySpan.Name() != "notify" {
+			t.Errorf("span の名前 = %q, want notify", notifySpan.Name())
+		}
+		if httpSpan.Name() != "POST /notify" {
+			t.Errorf("HTTP の span の名前 = %q, want POST /notify", httpSpan.Name())
+		}
+		if httpSpan.Parent().SpanID() != notifySpan.SpanContext().SpanID() {
+			t.Error("HTTP の span の親が notify ではない")
+		}
+		attrs := map[attribute.Key]attribute.Value{}
+		for _, kv := range notifySpan.Attributes() {
+			attrs[kv.Key] = kv.Value
+		}
+		if attrs["notify.messages"].AsInt64() != 2 || !attrs["notify.dry_run"].AsBool() {
+			t.Errorf("notify の属性 = %v, want messages=2, dry_run=true", attrs)
+		}
+		if notifySpan.Status().Code != codes.Unset {
+			t.Errorf("status = %v, want Unset", notifySpan.Status())
+		}
+	})
+	t.Run("失敗", func(t *testing.T) {
+		rec := recordSpans(t)
+		srv, _ := newServer(t, http.StatusInternalServerError, `{"error": "boom"}`)
+		n := newNotifier(t, Config{Endpoint: srv.URL + "/notify", APIKey: testAPIKey})
+		if err := n.Notify(context.Background(), messages(t, "1通目")); err == nil {
+			t.Fatal("Notify() がエラーを返さない")
+		}
+
+		var notifySpan sdktrace.ReadOnlySpan
+		for _, s := range rec.Ended() {
+			if s.Name() == "notify" {
+				notifySpan = s
+			}
+		}
+		if notifySpan == nil {
+			t.Fatal("notify の span がない")
+		}
+		if notifySpan.Status().Code != codes.Error {
+			t.Errorf("status = %v, want Error", notifySpan.Status())
+		}
+		// エラーの本文（エンドポイントの URL を含むことがある）は記録しない
+		if strings.Contains(notifySpan.Status().Description, srv.URL) || len(notifySpan.Events()) != 0 {
+			t.Errorf("notify の span にエラーの本文が記録されている: %v / %v", notifySpan.Status(), notifySpan.Events())
+		}
+	})
+	t.Run("メッセージがないときは span を作らない", func(t *testing.T) {
+		rec := recordSpans(t)
+		n := newNotifier(t, Config{Endpoint: "https://example.com/notify", APIKey: testAPIKey})
+		if err := n.Notify(context.Background(), nil); err != nil {
+			t.Fatalf("Notify(): %v", err)
+		}
+		if spans := rec.Ended(); len(spans) != 0 {
+			t.Errorf("span の数 = %d, want 0", len(spans))
+		}
+	})
 }

@@ -14,7 +14,7 @@ linters:
 
   settings:
     # 依存の向きを機械的に守る（README の「ディレクトリ構成と依存の向き」を参照）
-    #   cmd → adapter / config → usecase → domain
+    #   cmd → adapter / config → usecase → domain、cmd → telemetry
     depguard:
       rules:
         # domain は何にも依存しない（標準ライブラリだけ）
@@ -41,6 +41,19 @@ linters:
               desc: adapter は config に依存しない（値は cmd からコンストラクタで渡す）
             - pkg: github.com/zaki3mymy/notify-schedule/internal/adapter
               desc: adapter どうしは依存しない
+        # telemetry（トレースの仕組み）は、アプリの中身に依存しない（何を伏せるかは cmd が決める）
+        telemetry:
+          files:
+            - "**/internal/telemetry/**"
+          deny:
+            - pkg: github.com/zaki3mymy/notify-schedule/internal/config
+              desc: telemetry は config に依存しない（伏せる値は cmd から Hide で渡す）
+            - pkg: github.com/zaki3mymy/notify-schedule/internal/domain
+              desc: telemetry は domain に依存しない
+            - pkg: github.com/zaki3mymy/notify-schedule/internal/usecase
+              desc: telemetry は usecase に依存しない
+            - pkg: github.com/zaki3mymy/notify-schedule/internal/adapter
+              desc: telemetry は adapter に依存しない
         # config は adapter・usecase に依存しない
         config:
           files:

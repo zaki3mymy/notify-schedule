@@ -17,11 +17,20 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/zaki3mymy/notify-schedule/internal/domain"
 )
 
 // DefaultTimeout は、Config.Timeout を指定しなかったときの、1回のリクエストのタイムアウト。
 const DefaultTimeout = 30 * time.Second
+
+// tracerName は、このパッケージが作る span の計装の名前。
+const tracerName = "github.com/zaki3mymy/notify-schedule/internal/adapter/nandemooshirase"
 
 // maxErrorBody は、エラーのときに読むレスポンスの本文の上限（64 KiB）。
 // 大きな本文でメモリを使いすぎないようにする。
@@ -37,7 +46,8 @@ type Config struct {
 	DryRun bool
 	// Timeout は、1回のリクエストのタイムアウト。0 なら DefaultTimeout。
 	Timeout time.Duration
-	// HTTPClient は、リクエストに使うクライアント（テスト用）。nil なら Timeout を設定した http.Client を使う。
+	// HTTPClient は、リクエストに使うクライアント（テスト用）。nil なら Timeout を設定した http.Client を使う
+	// （リクエストの span を作り、トレースの ID を traceparent ヘッダーで nandemo-oshirase に引き継ぐ）。
 	HTTPClient *http.Client
 }
 
@@ -63,7 +73,14 @@ func New(cfg Config) (*Notifier, error) {
 		if timeout == 0 {
 			timeout = DefaultTimeout
 		}
-		client = &http.Client{Timeout: timeout}
+		client = &http.Client{
+			Timeout: timeout,
+			// span の名前は「メソッド パス」（例: POST /notify）にする（既定の名前は HTTP POST）
+			Transport: otelhttp.NewTransport(http.DefaultTransport,
+				otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+					return r.Method + " " + r.URL.Path
+				})),
+		}
 	}
 	return &Notifier{endpoint: cfg.Endpoint, apiKey: cfg.APIKey, dryRun: cfg.DryRun, client: client}, nil
 }
@@ -89,10 +106,23 @@ type errorResponse struct {
 //
 // 失敗しても再送しない。タイムアウトのときは、nandemo-oshirase 側では送れている可能性があるため
 // （再送すると二重に届くおそれがある）。2xx 以外のときは、ステータスコードと本文の error をエラーに含める。
-func (n *Notifier) Notify(ctx context.Context, msgs []domain.Message) error {
+func (n *Notifier) Notify(ctx context.Context, msgs []domain.Message) (err error) {
 	if len(msgs) == 0 {
 		return nil
 	}
+
+	// 失敗したときも、エラーの本文（エンドポイントの URL を含むことがある）は記録せず、エラーの型だけを付ける
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "notify", trace.WithAttributes(
+		attribute.Int("notify.messages", len(msgs)),
+		attribute.Bool("notify.dry_run", n.dryRun),
+	))
+	defer func() {
+		if err != nil {
+			span.SetAttributes(attribute.String("error.type", fmt.Sprintf("%T", err)))
+			span.SetStatus(codes.Error, "通知できませんでした")
+		}
+		span.End()
+	}()
 
 	texts := make([]string, 0, len(msgs))
 	for _, m := range msgs {
