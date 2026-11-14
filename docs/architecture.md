@@ -21,7 +21,7 @@ cmd ─┬─▶ adapter ─┐
 - `domain` は何にも依存しない（標準ライブラリだけ）。
 - `usecase` は `domain` だけに依存する。
 - `adapter` は `config` を直接読まない。値は `cmd` からコンストラクタで受け取る。
-- `telemetry` は、アプリの中身（`domain`・`usecase`・`adapter`・`config`）に依存しない。何を伏せるかは `cmd` が決めて渡す。
+- `telemetry` は、アプリの中身に依存しない。何を伏せるかは `cmd` が決めて渡す。
 - この向きは、golangci-lint の depguard で確認している（[.golangci.yml](../.golangci.yml)）。
 
 ## トレースの送り方
