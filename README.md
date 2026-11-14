@@ -28,6 +28,6 @@
 |---|---|
 | [docs/usage.md](./docs/usage.md) | 使い方（フラグ・終了コード・ログ・手元での実行） |
 | [docs/configuration.md](./docs/configuration.md) | 設定（環境変数と設定ファイル） |
-| [docs/operations.md](./docs/operations.md) | 運用（設定の更新、手動実行、実行の結果、切り戻し） |
-| [docs/architecture.md](./docs/architecture.md) | ディレクトリ構成と依存の向き |
+| [docs/operations.md](./docs/operations.md) | 運用（設定の更新、手動実行、実行の結果・トレース、切り戻し） |
+| [docs/architecture.md](./docs/architecture.md) | ディレクトリ構成と依存の向き、トレースの送り方 |
 | [docs/development.md](./docs/development.md) | 開発環境と、開発で使うコマンド |

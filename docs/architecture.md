@@ -20,3 +20,19 @@ cmd ─┬─▶ adapter ─┐
 - `usecase` は `domain` だけに依存する。
 - `adapter` は `config` を直接読まない。値は `cmd` からコンストラクタで受け取る。
 - この向きは、golangci-lint の depguard で確認している（[.golangci.yml](../.golangci.yml)）。
+
+## トレースの送り方
+
+トレースは OpenTelemetry で計装し、アプリ（[cmd/notify-schedule/telemetry.go](../cmd/notify-schedule/telemetry.go)）から Grafana Cloud の OTLP のエンドポイントに直接送る。Collector は挟まない。
+
+Collector をサイドカーとして挟まない理由：
+
+- **Cloud Run Jobs では、送り切る前に止められるおそれがある**。Job はメインのコンテナが終わると終わるため、サイドカーの Collector が溜めたトレースを送り切る前に止められないかを気にする必要がある。アプリから直接送れば、終了の前に `TracerProvider.Shutdown` で送り切るまで待てる（最大10秒）。
+- **Collector の機能が活きない**。1日1回・数秒で終わる Job なので、Collector の溜める・まとめる・再送する・加工するといった機能の効果が小さい。そのわりに、コンテナが増え、起動の順番（`depends_on`・起動の確認）やイメージの用意が要る。
+- **アプリのコードはほぼ変わらない**。Go では、Collector を挟んでも、SDK の初期化や span はアプリに書く必要がある。違うのは送り先と認証ヘッダーだけなので、あとで Collector を挟みたくなっても、`setupTracing` の数行を変えれば済む。
+
+そのほか：
+
+- 送信先と認証ヘッダーの値は、環境変数で受け取る（[configuration.md](./configuration.md#環境変数)）。どちらもないときは送らない。
+- nandemo-oshirase には `traceparent` ヘッダーでトレースの ID を引き継ぐ（W3C Trace Context）。nandemo-oshirase 側がそれを引き継げば、nandemo-oshirase の span も同じトレースにつながる。
+- Google カレンダーの API のクライアントは、内部で `otelhttp` を使っているので、TracerProvider を設定するだけで HTTP の呼び出しの span が出る。

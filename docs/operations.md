@@ -50,11 +50,12 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 ### トレース
 
-実行ごとのトレースを Grafana Cloud に送っている（Collector は挟まず、アプリから OTLP で直接送る）。Grafana の Explore で、データソース Tempo を選び、`service.name` が `notify-schedule` のものを探す。環境は `deployment.environment.name`（`dev`・`prod`）で絞り込める。
+実行ごとのトレースは Grafana Cloud で見る。Grafana の Explore で、データソース Tempo を選び、`service.name` が `notify-schedule` のものを探す。環境は `deployment.environment.name`（`dev`・`prod`）で絞り込める。
 
-- 1回の実行が `notify-schedule` という span になり、その下に Google カレンダーと nandemo-oshirase への HTTP の呼び出しの span がつく（属性: `schedule.date`・`schedule.calendars`・`schedule.events`・`notify.messages`・`notify.dry_run`）。
-- nandemo-oshirase には `traceparent` ヘッダーでトレースの ID を引き継ぐ。nandemo-oshirase 側がそれを引き継げば、nandemo-oshirase の span も同じトレースにつながる。
-- 送り残しがないよう、終了の前に最大10秒、トレースを送り切るのを待つ。
+- 1回の実行が `notify-schedule` という span になり、その下に Google カレンダーと nandemo-oshirase への HTTP の呼び出しの span がつく。
+- `notify-schedule` の span の属性: `schedule.date`（対象日）・`schedule.calendars`（カレンダーの数）・`schedule.events`（予定の数）・`notify.messages`（送ったメッセージの数）・`notify.dry_run`。失敗した実行は、span の status が Error になる。
+
+トレースの送り方は [architecture.md](./architecture.md#トレースの送り方) を参照。
 
 ## 切り戻し
 
