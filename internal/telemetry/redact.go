@@ -1,31 +1,21 @@
-package main
+package telemetry
 
 import (
 	"context"
-	"net/url"
 	"slices"
 	"strings"
 	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-
-	"github.com/zaki3mymy/notify-schedule/internal/config"
 )
 
-// トレースで、伏せた値の代わりに入れる文字列。
-const (
-	redactedCalendarID = "{calendarId}"
-	redactedNandemo    = "{nandemo-oshirase}"
-	redactedSecret     = "{redacted}"
-)
-
-// redactor は、トレースに出したくない値（カレンダーの ID、nandemo-oshirase のエンドポイントなど）を、
+// redactor は、トレースに出したくない値（カレンダーの ID、エンドポイントのホストなど）を、
 // 代わりの文字列に置き換える。
 //
 // HTTP の span の url.full・server.address や、エラーの本文（URL を含むことがある）には、これらの値が
 // そのまま入る。どこに入るかを1つずつ追うのではなく、送る直前に、span の文字列をまとめて置き換える。
-// 伏せる値は設定を読んだあとにわかるので、あとから足せるようにしている。
+// 伏せる値は呼び出し側が設定を読んだあとにわかるので、あとから足せるようにしている（Provider.Hide）。
 type redactor struct {
 	mu       sync.RWMutex
 	pairs    map[string]string // 伏せる値 → 代わりの文字列
@@ -70,26 +60,6 @@ func (r *redactor) redact(s string) string {
 		return s
 	}
 	return r.replacer.Replace(s)
-}
-
-// addConfig は、設定のうち、トレースに出したくない値を伏せるようにする。
-//
-//   - カレンダーの ID（メールアドレスのことがある）。URL のパスやクエリに入るときの形も含める
-//   - nandemo-oshirase のエンドポイントのホスト（API Gateway の URL を公開したくないため）
-//   - nandemo-oshirase の API キー（span には入らないはずだが、念のため）
-func (r *redactor) addConfig(cfg config.Config) {
-	for _, cal := range cfg.Calendars {
-		r.add(redactedCalendarID,
-			cal.ID,
-			url.PathEscape(cal.ID),
-			url.QueryEscape(cal.ID),
-			strings.ReplaceAll(cal.ID, "@", "%40"),
-		)
-	}
-	if u, err := url.Parse(cfg.NandemoOshirase.Endpoint); err == nil {
-		r.add(redactedNandemo, u.Host, u.Hostname())
-	}
-	r.add(redactedSecret, cfg.NandemoOshirase.APIKey.Value())
 }
 
 // redactingExporter は、span の文字列（名前・属性・イベント・status）の伏せる値を置き換えてから、

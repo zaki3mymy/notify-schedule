@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -141,6 +142,36 @@ func run(ctx context.Context, args []string, e env) int {
 	}
 	logger.Info("通知しました", "date", date.String(), "events", result.Events, "messages", result.Messages, "dry_run", opts.dryRun)
 	return exitOK
+}
+
+// tracerName は、run が作る span の計装の名前。
+const tracerName = "github.com/zaki3mymy/notify-schedule"
+
+// トレースで、伏せた値の代わりに入れる文字列。
+const (
+	redactedCalendarID = "{calendarId}"
+	redactedNandemo    = "{nandemo-oshirase}"
+	redactedSecret     = "{redacted}"
+)
+
+// hider は、トレースに出したくない値を伏せる（telemetry.Provider。テストで差し替える）。
+type hider interface {
+	Hide(placeholder string, values ...string)
+}
+
+// hideConfigInTraces は、設定のうち、トレースに出したくない値を伏せるようにする。
+//
+//   - カレンダーの ID（メールアドレスのことがある）。HTTP の span の URL やエラーの本文に入る
+//   - nandemo-oshirase のエンドポイントのホスト（API Gateway の URL を公開したくないため）
+//   - nandemo-oshirase の API キー（span には入らないはずだが、念のため）
+func hideConfigInTraces(h hider, cfg config.Config) {
+	for _, cal := range cfg.Calendars {
+		h.Hide(redactedCalendarID, cal.ID)
+	}
+	if u, err := url.Parse(cfg.NandemoOshirase.Endpoint); err == nil {
+		h.Hide(redactedNandemo, u.Host, u.Hostname())
+	}
+	h.Hide(redactedSecret, cfg.NandemoOshirase.APIKey.Value())
 }
 
 // recordError は、span を失敗にし、エラーを記録する。
