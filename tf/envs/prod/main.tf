@@ -26,8 +26,9 @@ provider "google" {
 module "app" {
   source = "../../modules"
 
-  project_id = var.project_id
-  image      = var.image
+  project_id  = var.project_id
+  image       = var.image
+  environment = "prod"
 
   # 毎日 21:00（Asia/Tokyo）に、明日の予定を通知する
   schedule = "0 21 * * *"

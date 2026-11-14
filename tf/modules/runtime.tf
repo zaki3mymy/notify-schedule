@@ -27,3 +27,12 @@ resource "google_secret_manager_secret_iam_member" "runtime_config" {
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.runtime.member
 }
+
+# Grafana Cloud にトレースを送るための Authorization ヘッダーの値（Basic <base64(スタックの ID:トークン)>）。
+# secret はプロジェクトに用意されている（このリポジトリの外で管理する）ので、読む権限だけを付ける
+resource "google_secret_manager_secret_iam_member" "runtime_grafana_otlp_auth" {
+  project   = var.project_id
+  secret_id = var.grafana_otlp_auth_secret
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.runtime.member
+}

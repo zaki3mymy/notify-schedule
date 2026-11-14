@@ -48,6 +48,14 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 ログの形は [usage.md](./usage.md#ログ) を参照。終了コードが `1`（取得や通知の失敗）のときは、Job が1回だけ再実行する。
 
+### トレース
+
+実行ごとのトレースを Grafana Cloud に送っている（Collector は挟まず、アプリから OTLP で直接送る）。Grafana の Explore で、データソース Tempo を選び、`service.name` が `notify-schedule` のものを探す。環境は `deployment.environment.name`（`dev`・`prod`）で絞り込める。
+
+- 1回の実行が `notify-schedule` という span になり、その下に Google カレンダーと nandemo-oshirase への HTTP の呼び出しの span がつく（属性: `schedule.date`・`schedule.calendars`・`schedule.events`・`notify.messages`・`notify.dry_run`）。
+- nandemo-oshirase には `traceparent` ヘッダーでトレースの ID を引き継ぐ。nandemo-oshirase 側がそれを引き継げば、nandemo-oshirase の span も同じトレースにつながる。
+- 送り残しがないよう、終了の前に最大10秒、トレースを送り切るのを待つ。
+
 ## 切り戻し
 
 ### アプリを前のリリースに戻す
