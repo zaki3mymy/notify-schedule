@@ -13,6 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
 	"github.com/zaki3mymy/notify-schedule/internal/config"
 	"github.com/zaki3mymy/notify-schedule/internal/domain"
 	"github.com/zaki3mymy/notify-schedule/internal/usecase"
@@ -379,4 +383,82 @@ func TestRunHelp(t *testing.T) {
 	if h.sourceCreated || h.notifierCreated {
 		t.Error("-h なのにアダプタが作られた")
 	}
+}
+
+// spanAttrs は、span の属性を map にする。
+func spanAttrs(s sdktrace.ReadOnlySpan) map[attribute.Key]attribute.Value {
+	m := map[attribute.Key]attribute.Value{}
+	for _, kv := range s.Attributes() {
+		m[kv.Key] = kv.Value
+	}
+	return m
+}
+
+func TestRunRecordsSpan(t *testing.T) {
+	t.Run("成功", func(t *testing.T) {
+		rec := recordSpans(t)
+		h := newHarness(t, validConfig)
+		h.source.events = testEvents()
+		if code := h.run(); code != exitOK {
+			t.Fatalf("run() = %d, want %d", code, exitOK)
+		}
+
+		spans := rec.Ended()
+		if len(spans) != 1 || spans[0].Name() != "notify-schedule" {
+			t.Fatalf("span = %v, want notify-schedule の1つ", spans)
+		}
+		attrs := spanAttrs(spans[0])
+		if got := attrs["schedule.date"].AsString(); got != "2026-11-13" {
+			t.Errorf("schedule.date = %q, want 2026-11-13", got)
+		}
+		if got := attrs["schedule.calendars"].AsInt64(); got != 2 {
+			t.Errorf("schedule.calendars = %d, want 2", got)
+		}
+		if got := attrs["schedule.events"].AsInt64(); got != 1 {
+			t.Errorf("schedule.events = %d, want 1", got)
+		}
+		if got := attrs["notify.messages"].AsInt64(); got != 1 {
+			t.Errorf("notify.messages = %d, want 1", got)
+		}
+		if spans[0].Status().Code != codes.Unset {
+			t.Errorf("status = %v, want Unset", spans[0].Status())
+		}
+	})
+	t.Run("失敗", func(t *testing.T) {
+		rec := recordSpans(t)
+		h := newHarness(t, validConfig)
+		h.source.err = errors.New("取得元のエラー")
+		if code := h.run(); code != exitFailure {
+			t.Fatalf("run() = %d, want %d", code, exitFailure)
+		}
+
+		spans := rec.Ended()
+		if len(spans) != 1 {
+			t.Fatalf("span の数 = %d, want 1", len(spans))
+		}
+		if st := spans[0].Status(); st.Code != codes.Error || !strings.Contains(st.Description, "取得元のエラー") {
+			t.Errorf("status = %v, want Error（取得元のエラー）", st)
+		}
+	})
+	t.Run("取得元を用意できない", func(t *testing.T) {
+		rec := recordSpans(t)
+		h := newHarness(t, validConfig)
+		h.sourceErr = errors.New("認証情報がない")
+		if code := h.run(); code != exitFailure {
+			t.Fatalf("run() = %d, want %d", code, exitFailure)
+		}
+		if spans := rec.Ended(); len(spans) != 1 || spans[0].Status().Code != codes.Error {
+			t.Errorf("span = %v, want Error の1つ", spans)
+		}
+	})
+	t.Run("設定の検証だけなら span を作らない", func(t *testing.T) {
+		rec := recordSpans(t)
+		h := newHarness(t, validConfig)
+		if code := h.run("--validate-config"); code != exitOK {
+			t.Fatalf("run() = %d, want %d", code, exitOK)
+		}
+		if spans := rec.Ended(); len(spans) != 0 {
+			t.Errorf("span の数 = %d, want 0", len(spans))
+		}
+	})
 }

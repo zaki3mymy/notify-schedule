@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"github.com/zaki3mymy/notify-schedule/internal/domain"
 )
 
@@ -37,7 +39,8 @@ type Config struct {
 	DryRun bool
 	// Timeout は、1回のリクエストのタイムアウト。0 なら DefaultTimeout。
 	Timeout time.Duration
-	// HTTPClient は、リクエストに使うクライアント（テスト用）。nil なら Timeout を設定した http.Client を使う。
+	// HTTPClient は、リクエストに使うクライアント（テスト用）。nil なら Timeout を設定した http.Client を使う
+	// （リクエストの span を作り、トレースの ID を traceparent ヘッダーで nandemo-oshirase に引き継ぐ）。
 	HTTPClient *http.Client
 }
 
@@ -63,7 +66,10 @@ func New(cfg Config) (*Notifier, error) {
 		if timeout == 0 {
 			timeout = DefaultTimeout
 		}
-		client = &http.Client{Timeout: timeout}
+		client = &http.Client{
+			Timeout:   timeout,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		}
 	}
 	return &Notifier{endpoint: cfg.Endpoint, apiKey: cfg.APIKey, dryRun: cfg.DryRun, client: client}, nil
 }

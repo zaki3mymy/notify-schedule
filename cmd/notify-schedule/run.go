@@ -8,6 +8,11 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/zaki3mymy/notify-schedule/internal/adapter/googlecalendar"
 	"github.com/zaki3mymy/notify-schedule/internal/adapter/nandemooshirase"
 	"github.com/zaki3mymy/notify-schedule/internal/config"
@@ -91,21 +96,37 @@ func run(ctx context.Context, args []string, e env) int {
 		return exitOK
 	}
 
+	// 予定の取得と通知（外部の API を呼ぶところ）を1つの span にする。
+	// アダプタの HTTP の呼び出しの span は、ctx を通じてこの span の子になる
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "notify-schedule", trace.WithAttributes(
+		attribute.String("schedule.date", date.String()),
+		attribute.Int("schedule.calendars", len(calendars)),
+		attribute.Bool("notify.dry_run", opts.dryRun),
+	))
+	defer span.End()
+
 	source, err := e.newSource(ctx)
 	if err != nil {
 		logger.Error("予定の取得元を用意できませんでした", "error", err.Error())
+		recordError(span, err)
 		return exitFailure
 	}
 	notifier, err := e.newNotifier(cfg.NandemoOshirase, opts.dryRun)
 	if err != nil {
 		logger.Error("通知先を用意できませんでした", "error", err.Error())
+		recordError(span, err)
 		return exitFailure
 	}
 
 	logger.Info("予定を取得して通知します", "date", date.String(), "calendars", len(calendars), "dry_run", opts.dryRun)
 	result, err := usecase.NewNotifySchedule(source, notifier).Run(ctx, calendars, date)
+	span.SetAttributes(
+		attribute.Int("schedule.events", result.Events),
+		attribute.Int("notify.messages", result.Messages),
+	)
 	if err != nil {
 		logger.Error("失敗しました", "date", date.String(), "events", result.Events, "error", err.Error())
+		recordError(span, err)
 		return exitFailure
 	}
 
@@ -115,6 +136,12 @@ func run(ctx context.Context, args []string, e env) int {
 	}
 	logger.Info("通知しました", "date", date.String(), "events", result.Events, "messages", result.Messages, "dry_run", opts.dryRun)
 	return exitOK
+}
+
+// recordError は、span を失敗にし、エラーを記録する。
+func recordError(span trace.Span, err error) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
 }
 
 // problemList は、不備をログに出せる形（文字列の一覧）にする。errors.Join でまとめたものは、1つずつに分ける。

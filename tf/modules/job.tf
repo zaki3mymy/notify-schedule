@@ -21,6 +21,32 @@ resource "google_cloud_run_v2_job" "app" {
           value = "/secrets/config.yaml"
         }
 
+        # トレースを Grafana Cloud に OTLP で直接送る（Collector は挟まない）
+        env {
+          name  = "OTEL_SERVICE_NAME"
+          value = "notify-schedule"
+        }
+        env {
+          # 環境（dev・prod）。Grafana で環境ごとに絞り込むために付ける。
+          # deployment.environment.name は新しいセマンティック規約の名前で、古い名前も一緒に付けておく
+          name  = "OTEL_RESOURCE_ATTRIBUTES"
+          value = "deployment.environment.name=${var.environment},deployment.environment=${var.environment}"
+        }
+        env {
+          name  = "GRAFANA_CLOUD_OTLP_ENDPOINT"
+          value = var.grafana_otlp_endpoint
+        }
+        env {
+          # Authorization ヘッダーの値。Secret Manager から読むので、値は state にも Job の設定にも残らない
+          name = "GRAFANA_CLOUD_OTLP_AUTH"
+          value_source {
+            secret_key_ref {
+              secret  = var.grafana_otlp_auth_secret
+              version = "latest"
+            }
+          }
+        }
+
         resources {
           limits = {
             cpu    = "1"
@@ -48,5 +74,8 @@ resource "google_cloud_run_v2_job" "app" {
   }
 
   # シークレットを読む権限ができてから Job を作る
-  depends_on = [google_secret_manager_secret_iam_member.runtime_config]
+  depends_on = [
+    google_secret_manager_secret_iam_member.runtime_config,
+    google_secret_manager_secret_iam_member.runtime_grafana_otlp_auth,
+  ]
 }

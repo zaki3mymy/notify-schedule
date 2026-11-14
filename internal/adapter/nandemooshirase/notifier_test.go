@@ -13,6 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/zaki3mymy/notify-schedule/internal/domain"
 	"github.com/zaki3mymy/notify-schedule/internal/usecase"
 )
@@ -28,6 +32,7 @@ type recorded struct {
 	path        string
 	apiKey      string
 	contentType string
+	traceparent string
 	body        map[string]any
 }
 
@@ -45,6 +50,7 @@ func newServer(t *testing.T, status int, body string) (*httptest.Server, *[]reco
 			path:        r.URL.Path,
 			apiKey:      r.Header.Get("x-api-key"),
 			contentType: r.Header.Get("Content-Type"),
+			traceparent: r.Header.Get("traceparent"),
 		}
 		if err := json.Unmarshal(b, &rec.body); err != nil {
 			t.Errorf("本文が JSON ではありません: %v (%s)", err, b)
@@ -259,5 +265,33 @@ func TestNew(t *testing.T) {
 		if strings.Contains(s, testAPIKey) {
 			t.Errorf("Notifier の文字列表現に API キーが含まれている: %q", s)
 		}
+	}
+}
+
+func TestNotifyPropagatesTraceContext(t *testing.T) {
+	// 呼び出し元（cmd）と同じく、traceparent ヘッダーで引き継ぐ propagator を設定する
+	prop := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(prop) })
+
+	traceID := trace.TraceID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10}
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     trace.SpanID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
+		TraceFlags: trace.FlagsSampled,
+	}))
+
+	srv, got := newServer(t, http.StatusOK, `{"message": "ok"}`)
+	// HTTPClient を渡さない（既定のクライアントが traceparent を付けることを確かめる）
+	n := newNotifier(t, Config{Endpoint: srv.URL + "/notify", APIKey: testAPIKey})
+	if err := n.Notify(ctx, messages(t, "1通目")); err != nil {
+		t.Fatalf("Notify(): %v", err)
+	}
+
+	if len(*got) != 1 {
+		t.Fatalf("リクエストの数 = %d, want 1", len(*got))
+	}
+	if tp := (*got)[0].traceparent; !strings.Contains(tp, traceID.String()) {
+		t.Errorf("traceparent = %q, want トレースの ID %s を含む", tp, traceID)
 	}
 }

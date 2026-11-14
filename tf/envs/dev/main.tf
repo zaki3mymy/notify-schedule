@@ -26,8 +26,9 @@ provider "google" {
 module "app" {
   source = "../../modules"
 
-  project_id = var.project_id
-  image      = var.image
+  project_id  = var.project_id
+  image       = var.image
+  environment = "dev"
 
   # dev は毎日は動かさないので、Cloud Scheduler を作らない（使うときは手で実行する）
 }
