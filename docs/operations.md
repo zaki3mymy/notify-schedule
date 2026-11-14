@@ -52,8 +52,18 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 実行ごとのトレースは Grafana Cloud で見る。Grafana の Explore で、データソース Tempo を選び、`service.name` が `notify-schedule` のものを探す。環境は `deployment.environment.name`（`dev`・`prod`）で絞り込める。
 
-- 1回の実行が `notify-schedule` という span になり、その下に Google カレンダーと nandemo-oshirase への HTTP の呼び出しの span がつく。
-- `notify-schedule` の span の属性: `schedule.date`（対象日）・`schedule.calendars`（カレンダーの数）・`schedule.events`（予定の数）・`notify.messages`（送ったメッセージの数）・`notify.dry_run`。失敗した実行は、span の status が Error になる。
+1回の実行は、次の span になる。失敗したところの span は、status が Error になる。
+
+```
+notify-schedule        1回の実行（schedule.date・schedule.calendars・schedule.events・notify.messages・notify.dry_run）
+├─ fetch_schedule      予定の取得（schedule.calendars・schedule.events）
+│  └─ fetch_calendar   カレンダーごとの取得（calendar.label・calendar.events）
+│     └─ HTTP GET      Google Calendar API の呼び出し
+└─ notify              通知（notify.messages・notify.dry_run）。予定がなく通知しないときは出ない
+   └─ POST /notify     nandemo-oshirase の呼び出し（この下に nandemo-oshirase の span がつく）
+```
+
+カレンダーの ID は span に出さない（ラベルで見分ける）。
 
 トレースの送り方は [architecture.md](./architecture.md#トレースの送り方) を参照。
 
