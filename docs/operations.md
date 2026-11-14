@@ -63,7 +63,7 @@ notify-schedule        1回の実行（schedule.date・schedule.calendars・sche
    └─ POST /notify     nandemo-oshirase の呼び出し（この下に nandemo-oshirase の span がつく）
 ```
 
-カレンダーの ID は span に出さない（ラベルで見分ける）。
+カレンダーの ID は span に出さない（ラベルで見分ける）。HTTP の span の URL（`url.full`）やエラーの本文に入るカレンダーの ID は `{calendarId}`、nandemo-oshirase のエンドポイントのホストは `{nandemo-oshirase}` に置き換えて送っている。
 
 トレースの送り方は [architecture.md](./architecture.md#トレースの送り方) を参照。
 

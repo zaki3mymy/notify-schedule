@@ -1,17 +1,16 @@
-package main
+package telemetry
 
 import (
 	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 const testOTLPAuth = "Basic dGVzdDp0b2tlbg==" //nolint:gosec // テスト用のダミーの値（本物の認証情報ではない）
@@ -38,7 +37,7 @@ func envMap(m map[string]string) func(string) (string, bool) {
 type otlpRequest struct {
 	path          string
 	authorization string
-	bodySize      int
+	body          []byte
 }
 
 // newOTLPServer は、受け取ったリクエストを記録する偽の OTLP の受け口を作る。
@@ -51,7 +50,7 @@ func newOTLPServer(t *testing.T) (*httptest.Server, func() []otlpRequest) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		got = append(got, otlpRequest{path: r.URL.Path, authorization: r.Header.Get("Authorization"), bodySize: len(b)})
+		got = append(got, otlpRequest{path: r.URL.Path, authorization: r.Header.Get("Authorization"), body: b})
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -63,7 +62,7 @@ func newOTLPServer(t *testing.T) (*httptest.Server, func() []otlpRequest) {
 	}
 }
 
-func TestSetupTracingSendsSpans(t *testing.T) {
+func TestSetupSendsSpans(t *testing.T) {
 	tests := []struct {
 		name     string
 		endpoint func(srvURL string) string
@@ -76,18 +75,18 @@ func TestSetupTracingSendsSpans(t *testing.T) {
 			restoreOTelGlobals(t)
 			srv, got := newOTLPServer(t)
 
-			shutdown, err := setupTracing(context.Background(), envMap(map[string]string{
+			p, err := Setup(context.Background(), "test-service", envMap(map[string]string{
 				envOTLPEndpoint: tt.endpoint(srv.URL),
 				envOTLPAuth:     testOTLPAuth,
 			}))
 			if err != nil {
-				t.Fatalf("setupTracing(): %v", err)
+				t.Fatalf("Setup(): %v", err)
 			}
 
-			_, span := otel.Tracer(tracerName).Start(context.Background(), "test")
+			_, span := otel.Tracer("test").Start(context.Background(), "test")
 			span.End()
-			if err := shutdown(context.Background()); err != nil {
-				t.Fatalf("shutdown(): %v", err)
+			if err := p.Shutdown(); err != nil {
+				t.Fatalf("Shutdown(): %v", err)
 			}
 
 			reqs := got()
@@ -100,8 +99,12 @@ func TestSetupTracingSendsSpans(t *testing.T) {
 			if reqs[0].authorization != testOTLPAuth {
 				t.Errorf("Authorization = %q, want %q", reqs[0].authorization, testOTLPAuth)
 			}
-			if reqs[0].bodySize == 0 {
+			if len(reqs[0].body) == 0 {
 				t.Error("本文が空")
+			}
+			// service.name の既定値を送る
+			if !strings.Contains(string(reqs[0].body), "test-service") {
+				t.Error("本文に service.name（test-service）が含まれていない")
 			}
 			// 呼び出し先にトレースの ID を引き継ぐ
 			if _, ok := otel.GetTextMapPropagator().(propagation.TraceContext); !ok {
@@ -111,23 +114,25 @@ func TestSetupTracingSendsSpans(t *testing.T) {
 	}
 }
 
-func TestSetupTracingWithoutEnvSendsNothing(t *testing.T) {
+func TestSetupWithoutEnvSendsNothing(t *testing.T) {
 	restoreOTelGlobals(t)
 	before := otel.GetTracerProvider()
 
-	shutdown, err := setupTracing(context.Background(), envMap(nil))
+	p, err := Setup(context.Background(), "test-service", envMap(nil))
 	if err != nil {
-		t.Fatalf("setupTracing(): %v", err)
+		t.Fatalf("Setup(): %v", err)
 	}
-	if err := shutdown(context.Background()); err != nil {
-		t.Errorf("shutdown(): %v", err)
+	// 送らないときも、Hide と Shutdown はそのまま呼べる
+	p.Hide("{x}", "value")
+	if err := p.Shutdown(); err != nil {
+		t.Errorf("Shutdown(): %v", err)
 	}
 	if otel.GetTracerProvider() != before {
 		t.Error("環境変数がないのに TracerProvider が変わった")
 	}
 }
 
-func TestSetupTracingInvalidEnv(t *testing.T) {
+func TestSetupInvalidEnv(t *testing.T) {
 	tests := []struct {
 		name string
 		env  map[string]string
@@ -141,26 +146,18 @@ func TestSetupTracingInvalidEnv(t *testing.T) {
 			restoreOTelGlobals(t)
 			before := otel.GetTracerProvider()
 
-			shutdown, err := setupTracing(context.Background(), envMap(tt.env))
+			p, err := Setup(context.Background(), "test-service", envMap(tt.env))
 			if err == nil {
-				t.Fatal("setupTracing() がエラーを返さない")
+				t.Fatal("Setup() がエラーを返さない")
 			}
-			// 失敗しても、呼び出し側がそのまま呼べる shutdown を返す
-			if err := shutdown(context.Background()); err != nil {
-				t.Errorf("shutdown(): %v", err)
+			// 失敗しても、呼び出し側がそのまま呼べる Provider を返す
+			p.Hide("{x}", "value")
+			if err := p.Shutdown(); err != nil {
+				t.Errorf("Shutdown(): %v", err)
 			}
 			if otel.GetTracerProvider() != before {
 				t.Error("失敗したのに TracerProvider が変わった")
 			}
 		})
 	}
-}
-
-// recordSpans は、テストの間、作られた span を記録する TracerProvider をグローバルに設定する。
-func recordSpans(t *testing.T) *tracetest.SpanRecorder {
-	t.Helper()
-	restoreOTelGlobals(t)
-	rec := tracetest.NewSpanRecorder()
-	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)))
-	return rec
 }
