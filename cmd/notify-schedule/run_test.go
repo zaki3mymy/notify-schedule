@@ -40,27 +40,37 @@ calendars:
 var testNow = time.Date(2026, time.November, 12, 12, 0, 0, 0, time.UTC)
 
 type fakeSource struct {
-	events  []domain.Event
-	err     error
-	gotCals []domain.Calendar
-	gotDate domain.Date
+	events []domain.Event
+	// failedLabels のラベルのカレンダーは、取得できなかったことにする
+	failedLabels []string
+	err          error
+	gotCals      []domain.Calendar
+	gotDate      domain.Date
 }
 
-func (s *fakeSource) Fetch(_ context.Context, cals []domain.Calendar, d domain.Date) (domain.DailySchedule, error) {
+func (s *fakeSource) Fetch(_ context.Context, cals []domain.Calendar, d domain.Date) (usecase.FetchResult, error) {
 	s.gotCals, s.gotDate = cals, d
 	if s.err != nil {
-		return domain.DailySchedule{}, s.err
+		return usecase.FetchResult{}, s.err
 	}
-	return domain.DailySchedule{Date: d, Events: s.events}, nil
+	result := usecase.FetchResult{Schedule: domain.DailySchedule{Date: d, Events: s.events}}
+	for _, cal := range cals {
+		if slices.Contains(s.failedLabels, cal.Label) {
+			result.Failures = append(result.Failures, usecase.CalendarFailure{Calendar: cal, Err: errors.New("backend error")})
+		}
+	}
+	return result, nil
 }
 
 type fakeNotifier struct {
 	err   error
 	calls int
+	got   []domain.Message
 }
 
-func (n *fakeNotifier) Notify(context.Context, []domain.Message) error {
+func (n *fakeNotifier) Notify(_ context.Context, msgs []domain.Message) error {
 	n.calls++
+	n.got = msgs
 	return n.err
 }
 
@@ -364,6 +374,16 @@ func TestRunFailures(t *testing.T) {
 			t.Errorf("最後のログ = %v", last)
 		}
 	})
+	t.Run("すべてのカレンダーの取得に失敗", func(t *testing.T) {
+		h := newHarness(t, validConfig)
+		h.source.failedLabels = []string{"仕事", "家族"}
+		if code := h.run(); code != exitFailure {
+			t.Errorf("run() = %d, want %d", code, exitFailure)
+		}
+		if h.notifier.calls != 0 {
+			t.Error("すべての取得に失敗したのに通知した")
+		}
+	})
 	t.Run("通知に失敗", func(t *testing.T) {
 		h := newHarness(t, validConfig)
 		h.source.events = testEvents()
@@ -372,6 +392,113 @@ func TestRunFailures(t *testing.T) {
 			t.Errorf("run() = %d, want %d", code, exitFailure)
 		}
 	})
+	t.Run("一部の取得に失敗し、通知にも失敗", func(t *testing.T) {
+		h := newHarness(t, validConfig)
+		h.source.events = testEvents()
+		h.source.failedLabels = []string{"家族"}
+		h.notifier.err = errors.New("通知先のエラー")
+		if code := h.run(); code != exitFailure {
+			t.Errorf("run() = %d, want %d", code, exitFailure)
+		}
+	})
+}
+
+func TestRunPartialScheduleExitCode(t *testing.T) {
+	tests := []struct {
+		args []string
+		want int
+	}{
+		// --dry-run は、LINE に送らないこと以外はオプションなしと同じ
+		{args: nil, want: exitOK},
+		{args: []string{"--dry-run"}, want: exitOK},
+		// 設定の確認で読めないカレンダーに気づけるよう、--fail-on-partial なら失敗にする（取得できた分は通知する）
+		{args: []string{"--fail-on-partial"}, want: exitFailure},
+		{args: []string{"--dry-run", "--fail-on-partial"}, want: exitFailure},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			h := newHarness(t, validConfig)
+			h.source.events = testEvents()
+			h.source.failedLabels = []string{"家族"}
+
+			if code := h.run(tt.args...); code != tt.want {
+				t.Fatalf("run(%v) = %d, want %d", tt.args, code, tt.want)
+			}
+			if h.notifier.calls != 1 {
+				t.Errorf("Notify = %d 回, want 1 回", h.notifier.calls)
+			}
+			if tt.want == exitFailure {
+				if last := h.lastLog(); last["severity"] != "ERROR" {
+					t.Errorf("最後のログ = %v, want ERROR", last)
+				}
+			}
+		})
+	}
+}
+
+func TestRunFailOnPartialSucceedsWithoutFailures(t *testing.T) {
+	h := newHarness(t, validConfig)
+	h.source.events = testEvents()
+	if code := h.run("--dry-run", "--fail-on-partial"); code != exitOK {
+		t.Errorf("run() = %d, want %d", code, exitOK)
+	}
+}
+
+func TestRunNotifiesPartialSchedule(t *testing.T) {
+	rec := recordSpans(t)
+	h := newHarness(t, validConfig)
+	h.source.events = testEvents()
+	h.source.failedLabels = []string{"家族"}
+
+	// 再実行で二重に送られないよう、終了コードは 0
+	if code := h.run(); code != exitOK {
+		t.Fatalf("run() = %d, want %d", code, exitOK)
+	}
+
+	// 取得できた分を、取得できなかったカレンダーの知らせと一緒に通知する
+	if h.notifier.calls != 1 || len(h.notifier.got) != 1 {
+		t.Fatalf("Notify = %d 回 %v, want 1 回1通", h.notifier.calls, h.notifier.got)
+	}
+	if text := h.notifier.got[0].Text(); !strings.Contains(text, "カレンダー「家族」の予定を取得できませんでした") || !strings.Contains(text, "打ち合わせ（仕事）") {
+		t.Errorf("通知したメッセージ = %q", text)
+	}
+
+	// ログに、取得できなかったカレンダーを WARNING で出す
+	var warned bool
+	for _, l := range h.logs() {
+		if l["severity"] != "WARNING" {
+			continue
+		}
+		warned = true
+		if labels, _ := l["failed_calendars"].([]any); len(labels) != 1 || labels[0] != "家族" {
+			t.Errorf("WARNING のログの failed_calendars = %v, want [家族]", l["failed_calendars"])
+		}
+		if errs, _ := l["errors"].([]any); len(errs) != 1 || strings.Contains(errs[0].(string), "family@example.com") {
+			t.Errorf("WARNING のログの errors = %v（カレンダーの ID を含めない）", l["errors"])
+		}
+	}
+	if !warned {
+		t.Errorf("WARNING のログがない: %v", h.logs())
+	}
+
+	// span は Error にし、取得できなかったカレンダーを属性に付ける
+	spans := rec.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("span の数 = %d, want 1", len(spans))
+	}
+	if st := spans[0].Status(); st.Code != codes.Error || !strings.Contains(st.Description, "1 件のカレンダー") {
+		t.Errorf("status = %v, want Error（1 件のカレンダー…）", st)
+	}
+	attrs := spanAttrs(spans[0])
+	if got := attrs["schedule.failed_calendars"].AsInt64(); got != 1 {
+		t.Errorf("schedule.failed_calendars = %d, want 1", got)
+	}
+	if got := attrs["schedule.failed_calendar_labels"].AsStringSlice(); !slices.Equal(got, []string{"家族"}) {
+		t.Errorf("schedule.failed_calendar_labels = %v, want [家族]", got)
+	}
+	if got := attrs["notify.messages"].AsInt64(); got != 1 {
+		t.Errorf("notify.messages = %d, want 1", got)
+	}
 }
 
 func TestRunHelp(t *testing.T) {

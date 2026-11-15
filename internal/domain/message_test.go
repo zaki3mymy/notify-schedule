@@ -206,6 +206,84 @@ func TestComposeMessagesTruncatesTooLongEvent(t *testing.T) {
 	}
 }
 
+func TestComposeMessagesWithFailedCalendars(t *testing.T) {
+	tokyo := mustLoadLocation(t, "Asia/Tokyo")
+	date := mustDate(t, 2026, time.November, 12, tokyo)
+	start := time.Date(2026, time.November, 12, 9, 0, 0, 0, tokyo)
+	failed := []Calendar{{ID: "work@example.com", Label: "仕事"}, {ID: "club@example.com", Label: "部活\n"}}
+
+	tests := []struct {
+		name   string
+		events []Event
+		want   []string
+	}{
+		{
+			name: "見出しのあとに、取得できなかったカレンダーを書く",
+			events: []Event{
+				{Title: "誕生日", Start: date.Start(), End: date.End(), AllDay: true, CalendarLabel: "家族"},
+				{Title: "歯医者", Start: start, End: start.Add(time.Hour), CalendarLabel: "家族"},
+			},
+			want: []string{
+				"11/12(木) の予定\n" +
+					"\n" +
+					"※ カレンダー「仕事」「部活」の予定を取得できませんでした\n" +
+					"\n" +
+					"[終日] 誕生日（家族）\n" +
+					"09:00-10:00 歯医者（家族）",
+			},
+		},
+		{
+			name:   "ほかのカレンダーに予定がなくても送る",
+			events: nil,
+			want: []string{
+				"11/12(木) の予定\n" +
+					"\n" +
+					"※ カレンダー「仕事」「部活」の予定を取得できませんでした",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ComposeMessages(DailySchedule{Date: date, Events: tt.events, FailedCalendars: failed})
+			assertMessages(t, got, tt.want)
+		})
+	}
+}
+
+func TestComposeMessagesFailedCalendarsOnlyInFirstMessage(t *testing.T) {
+	tokyo := mustLoadLocation(t, "Asia/Tokyo")
+	date := mustDate(t, 2026, time.November, 12, tokyo)
+
+	// 1行が約1000文字の予定を12件（複数のメッセージに分かれる）。取得できなかったカレンダーのラベルも長い
+	title := strings.Repeat("あ", 980)
+	var events []Event
+	for i := range 12 {
+		start := time.Date(2026, time.November, 12, i, 0, 0, 0, tokyo)
+		events = append(events, Event{Title: title, Start: start, End: start.Add(30 * time.Minute), CalendarLabel: "仕事"})
+	}
+	failed := []Calendar{{Label: strings.Repeat("い", MaxMessageLength)}}
+
+	got := ComposeMessages(DailySchedule{Date: date, Events: events, FailedCalendars: failed})
+	if len(got) < 2 {
+		t.Fatalf("len(ComposeMessages()) = %d, want >= 2", len(got))
+	}
+	total := 0
+	for i, m := range got {
+		text := m.Text()
+		if n := messageLength(text); n > MaxMessageLength {
+			t.Errorf("messages[%d] の長さ = %d, want <= %d", i, n, MaxMessageLength)
+		}
+		hasNotice := strings.Contains(text, failedMark+" カレンダー")
+		if hasNotice != (i == 0) {
+			t.Errorf("messages[%d] の知らせの有無 = %v, want %v", i, hasNotice, i == 0)
+		}
+		total += strings.Count(text, title+"（仕事）")
+	}
+	if total != len(events) {
+		t.Errorf("予定の行の数 = %d, want %d", total, len(events))
+	}
+}
+
 func assertMessages(t *testing.T, got []Message, want []string) {
 	t.Helper()
 	if len(got) != len(want) {

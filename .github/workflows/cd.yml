@@ -115,6 +115,7 @@ jobs:
         run: make tf-apply ENV="$TF_ENV" GCP_PROJECT_ID="$GCP_PROJECT_ID" IMAGE_TAG="$GITHUB_SHA" TF_APPLY_ARGS="-auto-approve -no-color"
 
       # デプロイした Job を --dry-run で実行する（実際のカレンダーを読み、nandemo-oshirase には dry_run で送る。LINE には送らない）。
+      # --fail-on-partial で、読めないカレンダーが1つでもあれば失敗にする。
       # gcloud はランナーに入っているものを使う
       - name: Smoke test
         env:

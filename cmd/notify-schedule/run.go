@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/url"
@@ -23,9 +24,10 @@ import (
 
 // 終了コード（Cloud Run Jobs のリトライと監視で使う）
 const (
-	// exitOK は、成功（予定が0件で通知しなかったときも含む）。
+	// exitOK は、成功（予定が0件で通知しなかったとき、一部のカレンダーの予定を取得できずに、取得できた分を通知したときも含む）。
 	exitOK = 0
-	// exitFailure は、予定の取得や通知に失敗したとき。Cloud Run Jobs は再実行する。
+	// exitFailure は、予定の取得（すべてのカレンダー）や通知に失敗したとき。Cloud Run Jobs は再実行する。
+	// --fail-on-partial なら、一部のカレンダーの予定を取得できなかったときも exitFailure にする。
 	exitFailure = 1
 	// exitInvalid は、フラグや設定に不備があるとき（外部の API には触れていない）。
 	exitInvalid = 2
@@ -128,11 +130,29 @@ func run(ctx context.Context, args []string, e env) int {
 	result, err := usecase.NewNotifySchedule(source, notifier).Run(ctx, calendars, date)
 	span.SetAttributes(
 		attribute.Int("schedule.events", result.Events),
+		attribute.Int("schedule.failed_calendars", len(result.Failures)),
 		attribute.Int("notify.messages", result.Messages),
 	)
+	// 一部のカレンダーの予定を取得できなかったときは、取得できた分は通知して、終了コードは 0 にする
+	// （1 にすると Job が再実行し、二重に送られるため）。そのかわり、span を Error にして、トレースで見つけられるようにする
+	if result.Partial() {
+		labels := result.FailedLabels()
+		logger.Warn("一部のカレンダーの予定を取得できませんでした。取得できた分を通知します",
+			"date", date.String(), "failed_calendars", labels, "errors", failureList(result.Failures))
+		span.SetAttributes(attribute.StringSlice("schedule.failed_calendar_labels", labels))
+		span.SetStatus(codes.Error, fmt.Sprintf("%d 件のカレンダーの予定を取得できませんでした", len(labels)))
+	}
 	if err != nil {
 		logger.Error("失敗しました", "date", date.String(), "events", result.Events, "error", err.Error())
 		recordError(span, err)
+		return exitFailure
+	}
+
+	// 設定の確認（make secret-update・CD のスモークテスト）で、読めないカレンダーに気づけるよう、
+	// --fail-on-partial なら一部の取得の失敗も失敗にする（--dry-run と一緒に使い、再実行で二重に送られないようにする）
+	if result.Partial() && opts.failOnPartial {
+		logger.Error("--fail-on-partial なので、一部のカレンダーの予定を取得できなかったことを失敗にします",
+			"date", date.String(), "failed_calendars", result.FailedLabels())
 		return exitFailure
 	}
 
@@ -140,7 +160,8 @@ func run(ctx context.Context, args []string, e env) int {
 		logger.Info("予定がないので、通知しませんでした", "date", date.String(), "events", result.Events)
 		return exitOK
 	}
-	logger.Info("通知しました", "date", date.String(), "events", result.Events, "messages", result.Messages, "dry_run", opts.dryRun)
+	logger.Info("通知しました", "date", date.String(), "events", result.Events, "messages", result.Messages,
+		"failed_calendars", len(result.Failures), "dry_run", opts.dryRun)
 	return exitOK
 }
 
@@ -195,6 +216,15 @@ func problemList(errs []error) []string {
 	}
 	for _, err := range errs {
 		add(err)
+	}
+	return list
+}
+
+// failureList は、取得できなかったカレンダーをログに出せる形（文字列の一覧）にする。
+func failureList(failures []usecase.CalendarFailure) []string {
+	list := make([]string, 0, len(failures))
+	for _, f := range failures {
+		list = append(list, f.Error())
 	}
 	return list
 }

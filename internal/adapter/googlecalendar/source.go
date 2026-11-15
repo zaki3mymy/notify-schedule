@@ -9,7 +9,6 @@ package googlecalendar
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -21,6 +20,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/zaki3mymy/notify-schedule/internal/domain"
+	"github.com/zaki3mymy/notify-schedule/internal/usecase"
 )
 
 // pageSize は、1回のリクエストで取得する予定の数（Calendar API の上限は 2500）。
@@ -48,30 +48,31 @@ func New(ctx context.Context, opts ...option.ClientOption) (*Source, error) {
 // Fetch は、cals のすべてのカレンダーから d の予定を取得し、1つの DailySchedule にまとめる。
 //
 // d の範囲（d.Start〜d.End）に少しでもかかる予定を取得する（前日から続く予定や、翌日まで続く予定も含む）。
-// キャンセルされた予定は除く。取得に失敗したカレンダーがあれば、すべてのカレンダーを試したうえで、
-// 失敗したカレンダーのラベルをすべて含むエラーを返す（エラーにはカレンダーの ID を含めない。
-// ID はメールアドレスのことがあるため）。
-func (s *Source) Fetch(ctx context.Context, cals []domain.Calendar, d domain.Date) (domain.DailySchedule, error) {
+// キャンセルされた予定は除く。取得に失敗したカレンダーがあっても、ほかのカレンダーは取得し、
+// 失敗したカレンダーを FetchResult.Failures で返す（error は返さない）。
+// 失敗したカレンダーがあれば、fetch_schedule の span を Error にする。
+func (s *Source) Fetch(ctx context.Context, cals []domain.Calendar, d domain.Date) (usecase.FetchResult, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "fetch_schedule",
 		trace.WithAttributes(attribute.Int("schedule.calendars", len(cals))))
 	defer span.End()
 
-	schedule := domain.DailySchedule{Date: d}
-	var errs []error
+	result := usecase.FetchResult{Schedule: domain.DailySchedule{Date: d}}
 	for _, cal := range cals {
 		events, err := s.fetchCalendar(ctx, cal, d)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("カレンダー「%s」の予定を取得できませんでした: %w", cal.Label, err))
+			result.Failures = append(result.Failures, usecase.CalendarFailure{Calendar: cal, Err: err})
 			continue
 		}
-		schedule.Events = append(schedule.Events, events...)
+		result.Schedule.Events = append(result.Schedule.Events, events...)
 	}
-	if len(errs) > 0 {
-		span.SetStatus(codes.Error, fmt.Sprintf("%d 件のカレンダーの予定を取得できませんでした", len(errs)))
-		return domain.DailySchedule{}, errors.Join(errs...)
+	span.SetAttributes(
+		attribute.Int("schedule.events", len(result.Schedule.Events)),
+		attribute.Int("schedule.failed_calendars", len(result.Failures)),
+	)
+	if len(result.Failures) > 0 {
+		span.SetStatus(codes.Error, fmt.Sprintf("%d 件のカレンダーの予定を取得できませんでした", len(result.Failures)))
 	}
-	span.SetAttributes(attribute.Int("schedule.events", len(schedule.Events)))
-	return schedule, nil
+	return result, nil
 }
 
 // fetchCalendar は、1つのカレンダーから d の予定を取得する。

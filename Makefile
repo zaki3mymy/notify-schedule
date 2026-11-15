@@ -87,9 +87,9 @@ tf-apply: ## Terraform の apply（ENV・GCP_PROJECT_ID が要る。先に tf-in
 	terraform -chdir=tf/envs/$(ENV) apply -input=false $(TF_APPLY_ARGS) $(TF_VARS)
 
 .PHONY: smoke-test
-smoke-test: ## デプロイした Cloud Run Job を --dry-run で実行し、成功するかを確かめる（GCP_PROJECT_ID が要る）
+smoke-test: ## デプロイした Cloud Run Job を --dry-run で実行し、成功するかを確かめる（読めないカレンダーが1つでもあれば失敗。GCP_PROJECT_ID が要る）
 	$(call require,GCP_PROJECT_ID)
-	gcloud run jobs execute notify-schedule --project=$(GCP_PROJECT_ID) --region=asia-northeast1 --args=--dry-run --wait
+	gcloud run jobs execute notify-schedule --project=$(GCP_PROJECT_ID) --region=asia-northeast1 --args=--dry-run,--fail-on-partial --wait
 
 .PHONY: secret-update
 secret-update: ## 設定ファイルを Secret Manager に入れ、古いバージョンを消す（ENV・GCP_PROJECT_ID・FILE が要る）
