@@ -14,7 +14,7 @@
 
 ## 設定の更新
 
-カレンダーの追加や API キーの変更は、設定ファイルを直して `make secret-update` で入れる（詳しくは [configuration.md](./configuration.md#デプロイ先の設定ファイル)）。新しい設定で `--dry-run` が通らなければ、古い設定のまま残る。
+カレンダーの追加や API キーの変更は、設定ファイルを直して `make secret-update` で入れる（詳しくは [configuration.md](./configuration.md#デプロイ先の設定ファイル)）。新しい設定で `--dry-run --fail-on-partial` が通らなければ（読めないカレンダーが1つでもあれば）、古い設定のまま残る。
 
 ```shell
 make secret-update ENV=prod GCP_PROJECT_ID=<プロジェクト ID> FILE=config.yaml

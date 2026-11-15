@@ -27,7 +27,7 @@ const (
 	// exitOK は、成功（予定が0件で通知しなかったとき、一部のカレンダーの予定を取得できずに、取得できた分を通知したときも含む）。
 	exitOK = 0
 	// exitFailure は、予定の取得（すべてのカレンダー）や通知に失敗したとき。Cloud Run Jobs は再実行する。
-	// --dry-run では、一部のカレンダーの予定を取得できなかったときも exitFailure にする。
+	// --fail-on-partial なら、一部のカレンダーの予定を取得できなかったときも exitFailure にする。
 	exitFailure = 1
 	// exitInvalid は、フラグや設定に不備があるとき（外部の API には触れていない）。
 	exitInvalid = 2
@@ -148,10 +148,10 @@ func run(ctx context.Context, args []string, e env) int {
 		return exitFailure
 	}
 
-	// --dry-run なら LINE には送らないので、再実行されても二重には送られない。設定の確認（make secret-update や
-	// CD のスモークテスト）で、読めないカレンダーに気づけるよう、一部の取得の失敗も失敗にする
-	if result.Partial() && opts.dryRun {
-		logger.Error("--dry-run なので、一部のカレンダーの予定を取得できなかったことを失敗にします",
+	// 設定の確認（make secret-update・CD のスモークテスト）で、読めないカレンダーに気づけるよう、
+	// --fail-on-partial なら一部の取得の失敗も失敗にする（--dry-run と一緒に使い、再実行で二重に送られないようにする）
+	if result.Partial() && opts.failOnPartial {
+		logger.Error("--fail-on-partial なので、一部のカレンダーの予定を取得できなかったことを失敗にします",
 			"date", date.String(), "failed_calendars", result.FailedLabels())
 		return exitFailure
 	}

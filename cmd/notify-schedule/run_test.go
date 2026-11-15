@@ -403,20 +403,44 @@ func TestRunFailures(t *testing.T) {
 	})
 }
 
-func TestRunDryRunFailsOnPartialSchedule(t *testing.T) {
+func TestRunPartialScheduleExitCode(t *testing.T) {
+	tests := []struct {
+		args []string
+		want int
+	}{
+		// --dry-run は、LINE に送らないこと以外はオプションなしと同じ
+		{args: nil, want: exitOK},
+		{args: []string{"--dry-run"}, want: exitOK},
+		// 設定の確認で読めないカレンダーに気づけるよう、--fail-on-partial なら失敗にする（取得できた分は通知する）
+		{args: []string{"--fail-on-partial"}, want: exitFailure},
+		{args: []string{"--dry-run", "--fail-on-partial"}, want: exitFailure},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			h := newHarness(t, validConfig)
+			h.source.events = testEvents()
+			h.source.failedLabels = []string{"家族"}
+
+			if code := h.run(tt.args...); code != tt.want {
+				t.Fatalf("run(%v) = %d, want %d", tt.args, code, tt.want)
+			}
+			if h.notifier.calls != 1 {
+				t.Errorf("Notify = %d 回, want 1 回", h.notifier.calls)
+			}
+			if tt.want == exitFailure {
+				if last := h.lastLog(); last["severity"] != "ERROR" {
+					t.Errorf("最後のログ = %v, want ERROR", last)
+				}
+			}
+		})
+	}
+}
+
+func TestRunFailOnPartialSucceedsWithoutFailures(t *testing.T) {
 	h := newHarness(t, validConfig)
 	h.source.events = testEvents()
-	h.source.failedLabels = []string{"家族"}
-
-	// 設定の確認で読めないカレンダーに気づけるよう、--dry-run では失敗にする（LINE には送らないので再実行しても二重にならない）
-	if code := h.run("--dry-run"); code != exitFailure {
-		t.Fatalf("run(--dry-run) = %d, want %d", code, exitFailure)
-	}
-	if h.notifier.calls != 1 {
-		t.Errorf("Notify = %d 回, want 1 回（dry_run で送る）", h.notifier.calls)
-	}
-	if last := h.lastLog(); last["severity"] != "ERROR" {
-		t.Errorf("最後のログ = %v, want ERROR", last)
+	if code := h.run("--dry-run", "--fail-on-partial"); code != exitOK {
+		t.Errorf("run() = %d, want %d", code, exitOK)
 	}
 }
 
