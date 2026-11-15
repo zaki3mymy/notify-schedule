@@ -23,6 +23,9 @@ type options struct {
 	calendars []string
 	// dryRun は、nandemo-oshirase に dry_run で送るか（LINE には送らない）。
 	dryRun bool
+	// failOnPartial は、一部のカレンダーの予定を取得できなかったときも、終了コードを exitFailure にするか
+	// （取得できた分は通知する）。設定の確認（make secret-update・CD のスモークテスト）で --dry-run と一緒に使う。
+	failOnPartial bool
 	// validateConfig は、フラグと設定の検証だけを行って終わるか。
 	validateConfig bool
 }
@@ -47,6 +50,7 @@ func parseFlags(args []string, errOut io.Writer) (options, error) {
 	fs.IntVar(&opts.offsetDays, "offset-days", 1, "設定のタイムゾーンでの「今日」から何日後を対象日にするか（0 で今日）")
 	fs.Var((*stringList)(&opts.calendars), "calendar", "予定を取得するカレンダーを、設定の ID かラベルで絞り込む（何回でも指定できる）")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "nandemo-oshirase に dry_run で送る（LINE には送らない）")
+	fs.BoolVar(&opts.failOnPartial, "fail-on-partial", false, "一部のカレンダーの予定を取得できなかったときも、失敗（終了コード 1）にする（取得できた分は通知する）")
 	fs.BoolVar(&opts.validateConfig, "validate-config", false, "フラグと設定の検証だけを行って終わる（外部の API には触れない）")
 
 	if err := fs.Parse(args); err != nil {

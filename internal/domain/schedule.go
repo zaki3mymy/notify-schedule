@@ -24,14 +24,22 @@ type Event struct {
 }
 
 // DailySchedule は、ある1日の予定。
+//
+// FailedCalendars は、予定を取得できなかったカレンダー。Events には、それ以外のカレンダーの予定だけが入る。
 type DailySchedule struct {
-	Date   Date
-	Events []Event
+	Date            Date
+	Events          []Event
+	FailedCalendars []Calendar
 }
 
-// IsEmpty は、予定が1件もないかを返す。
+// IsEmpty は、予定が1件もないかを返す（取得できなかったカレンダーがあるかは問わない）。
 func (s DailySchedule) IsEmpty() bool {
 	return len(s.Events) == 0
+}
+
+// IsPartial は、予定を取得できなかったカレンダーがあるかを返す。
+func (s DailySchedule) IsPartial() bool {
+	return len(s.FailedCalendars) > 0
 }
 
 // SortedEvents は、通知に載せる順に並べた予定を返す（Events は変えない）。

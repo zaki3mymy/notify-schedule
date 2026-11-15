@@ -33,9 +33,9 @@ new=$(gcloud secrets versions add "$SECRET" --project="$GCP_PROJECT_ID" --data-f
 new=${new##*/}
 echo "  バージョン $new を追加しました"
 
-echo "3/4 Cloud Run Job を --dry-run で実行して、実際に動くかを確かめます"
+echo "3/4 Cloud Run Job を --dry-run で実行して、実際に動くかを確かめます（読めないカレンダーが1つでもあれば失敗にします）"
 if describe=$(gcloud run jobs describe "$JOB" --project="$GCP_PROJECT_ID" --region="$REGION" 2>&1); then
-  if ! gcloud run jobs execute "$JOB" --project="$GCP_PROJECT_ID" --region="$REGION" --args=--dry-run --wait; then
+  if ! gcloud run jobs execute "$JOB" --project="$GCP_PROJECT_ID" --region="$REGION" --args=--dry-run,--fail-on-partial --wait; then
     echo "--dry-run が失敗したので、追加したバージョン $new を消します（古いバージョンが残ります）" >&2
     gcloud secrets versions destroy "$new" --secret="$SECRET" --project="$GCP_PROJECT_ID" --quiet
     exit 1

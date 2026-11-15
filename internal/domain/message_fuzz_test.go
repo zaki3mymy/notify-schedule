@@ -12,20 +12,23 @@ import (
 //   - 予定が1件以上あれば、メッセージが1通以上ある
 //   - どのメッセージも空でなく、MaxMessageLength を超えない
 //   - 1通目の見出しは「M/D(曜) の予定」、2通目からは「（続き）」付き
+//   - 取得できなかったカレンダーがあれば、1通目の見出しのあとにだけ、その知らせがある
 //   - すべてのメッセージの予定の行を合わせると、予定の数と同じ（予定が消えたり、行が崩れたりしない）
 //
 // go test ではシードだけを実行する。入力を生成して探すときは次を実行する。
 //
 //	go test -fuzz=FuzzComposeMessages ./internal/domain
 func FuzzComposeMessages(f *testing.F) {
-	// title, label, 予定の数, タイトルの繰り返し回数, 開始の分（対象日の 00:00 から）, 長さの分, 終日か
-	f.Add("打ち合わせ", "仕事", uint8(1), uint16(1), int16(540), int16(60), false)
-	f.Add("", "", uint8(3), uint16(0), int16(0), int16(0), true)
-	f.Add("買い物\nリスト", "家\n族", uint8(2), uint16(1), int16(-120), int16(600), false)
-	f.Add("あ", "仕事", uint8(12), uint16(980), int16(0), int16(30), false)     // 予定の行の区切りで分かれる
-	f.Add("😀", "仕事", uint8(2), uint16(3000), int16(1380), int16(120), false) // サロゲートペアで1件が上限を超える
-	f.Add("  \t ", "　", uint8(1), uint16(1), int16(1440), int16(-10), false)
-	f.Add("\xff\xfe", "\x80", uint8(5), uint16(100), int16(-1440), int16(3000), false) // 不正な UTF-8
+	// title, label, 予定の数, タイトルの繰り返し回数, 開始の分（対象日の 00:00 から）, 長さの分, 終日か,
+	// 取得できなかったカレンダーの数（ラベルは label を繰り返したもの）
+	f.Add("打ち合わせ", "仕事", uint8(1), uint16(1), int16(540), int16(60), false, uint8(0))
+	f.Add("", "", uint8(3), uint16(0), int16(0), int16(0), true, uint8(0))
+	f.Add("買い物\nリスト", "家\n族", uint8(2), uint16(1), int16(-120), int16(600), false, uint8(1))
+	f.Add("あ", "仕事", uint8(12), uint16(980), int16(0), int16(30), false, uint8(0))     // 予定の行の区切りで分かれる
+	f.Add("😀", "仕事", uint8(2), uint16(3000), int16(1380), int16(120), false, uint8(0)) // サロゲートペアで1件が上限を超える
+	f.Add("  \t ", "　", uint8(1), uint16(1), int16(1440), int16(-10), false, uint8(2))
+	f.Add("\xff\xfe", "\x80", uint8(5), uint16(100), int16(-1440), int16(3000), false, uint8(3)) // 不正な UTF-8
+	f.Add("あ", "い", uint8(5), uint16(980), int16(0), int16(30), false, uint8(200))               // 知らせが長い
 
 	loc, err := time.LoadLocation("Asia/Tokyo")
 	if err != nil {
@@ -36,7 +39,7 @@ func FuzzComposeMessages(f *testing.F) {
 		f.Fatalf("NewDate: %v", err)
 	}
 
-	f.Fuzz(func(t *testing.T, title, label string, count uint8, repeat uint16, startMinute, durationMinute int16, allDay bool) {
+	f.Fuzz(func(t *testing.T, title, label string, count uint8, repeat uint16, startMinute, durationMinute int16, allDay bool, failedCount uint8) {
 		// 大きすぎる入力でテストが遅くならないよう、範囲を絞る
 		n := int(count)%30 + 1
 		title = strings.Repeat(title, int(repeat)%3000)
@@ -56,7 +59,12 @@ func FuzzComposeMessages(f *testing.F) {
 			})
 		}
 
-		messages := ComposeMessages(DailySchedule{Date: date, Events: events})
+		var failed []Calendar
+		for range int(failedCount) % 50 {
+			failed = append(failed, Calendar{Label: strings.Repeat(label, 10)})
+		}
+
+		messages := ComposeMessages(DailySchedule{Date: date, Events: events, FailedCalendars: failed})
 		if len(messages) == 0 {
 			t.Fatalf("予定が %d 件あるのに、メッセージがない", n)
 		}
@@ -78,6 +86,19 @@ func FuzzComposeMessages(f *testing.F) {
 			heading, body, ok := strings.Cut(text, "\n\n")
 			if !ok || heading != wantHeading {
 				t.Fatalf("messages[%d] の見出し = %q, want %q", i, heading, wantHeading)
+			}
+			hasNotice := strings.HasPrefix(body, failedMark+" カレンダー")
+			if hasNotice != (i == 0 && len(failed) > 0) {
+				t.Fatalf("messages[%d] の知らせの有無 = %v, want %v", i, hasNotice, i == 0 && len(failed) > 0)
+			}
+			if hasNotice {
+				// 知らせのあとに予定の行がないのは、1行目の予定が知らせと1通に収まらず、次に回ったときだけ
+				if _, body, ok = strings.Cut(body, "\n\n"); !ok {
+					if len(messages) == 1 {
+						t.Fatalf("messages[%d] に予定の行がない", i)
+					}
+					continue
+				}
 			}
 			if body == "" {
 				t.Fatalf("messages[%d] に予定の行がない", i)

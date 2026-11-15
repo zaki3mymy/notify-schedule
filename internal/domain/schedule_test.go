@@ -16,6 +16,16 @@ func TestDailyScheduleIsEmpty(t *testing.T) {
 	}
 }
 
+func TestDailyScheduleIsPartial(t *testing.T) {
+	date := mustDate(t, 2026, time.November, 12, mustLoadLocation(t, "Asia/Tokyo"))
+	if (DailySchedule{Date: date, Events: []Event{{Title: "a"}}}).IsPartial() {
+		t.Error("取得できなかったカレンダーがないのに IsPartial() = true")
+	}
+	if !(DailySchedule{Date: date, FailedCalendars: []Calendar{{Label: "仕事"}}}).IsPartial() {
+		t.Error("取得できなかったカレンダーがあるのに IsPartial() = false")
+	}
+}
+
 func TestDailyScheduleSortedEvents(t *testing.T) {
 	tokyo := mustLoadLocation(t, "Asia/Tokyo")
 	date := mustDate(t, 2026, time.November, 12, tokyo)
