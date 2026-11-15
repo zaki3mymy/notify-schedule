@@ -21,24 +21,29 @@
 2. **1つでも不備があれば、Google カレンダーにも nandemo-oshirase にも触れずに、不備をすべてログに出して終わる**
 3. `--validate-config` なら、ここで終わる
 4. 予定を取得し、メッセージにまとめて、通知する（予定がなければ通知しない）。このとき、トレースの span を作る（[operations.md](./operations.md#トレース)）
+   - 一部のカレンダーの予定を取得できなかったときは、取得できた分を、取得できなかったカレンダーの知らせと一緒に通知する（ほかのカレンダーに予定がなくても、知らせだけを通知する）
+   - すべてのカレンダーの予定を取得できなかったときは、通知しない
 
 ## 終了コード
 
 | コード | 意味 |
 |---|---|
-| `0` | 成功（予定がなく通知しなかったときも含む）。`-h` と、不備のない `--validate-config` も `0` |
-| `1` | 予定の取得や通知に失敗した（Cloud Run Jobs は再実行する） |
+| `0` | 成功（予定がなく通知しなかったときも含む）。`-h` と、不備のない `--validate-config` も `0`。一部のカレンダーの予定を取得できず、取得できた分を通知したときも `0`（`--dry-run` を除く） |
+| `1` | すべてのカレンダーの予定の取得や、通知に失敗した（Cloud Run Jobs は再実行する）。`--dry-run` では、一部のカレンダーの予定を取得できなかったときも `1` |
 | `2` | フラグか設定に不備がある（外部の API には触れていない） |
 
 通知は最後に1回だけ行う。通知より前に失敗したときは通知しないので、再実行しても二重には送られない。
+
+一部のカレンダーの予定を取得できなかったときに `0` にするのは、`1` にすると Job が再実行して、取得できた分が二重に送られるため。失敗は、ログ（`WARNING`）とトレース（span の status が Error）でわかる（[operations.md](./operations.md#トレース)）。`--dry-run` は LINE に送らないので、設定の確認（`make secret-update`・CD のスモークテスト）で読めないカレンダーに気づけるよう `1` にする。
 
 ## ログ
 
 標準出力に、1行1件の JSON で出す。Cloud Logging が読めるよう、レベルは `severity`（`INFO`・`ERROR` など）、本文は `message` のキーにしている。
 
 ```json
-{"time":"...","severity":"INFO","message":"通知しました","date":"2026-11-13","events":3,"messages":1,"dry_run":false}
+{"time":"...","severity":"INFO","message":"通知しました","date":"2026-11-13","events":3,"messages":1,"failed_calendars":0,"dry_run":false}
 {"time":"...","severity":"INFO","message":"予定がないので、通知しませんでした","date":"2026-11-13","events":0}
+{"time":"...","severity":"WARNING","message":"一部のカレンダーの予定を取得できませんでした。取得できた分を通知します","date":"2026-11-13","failed_calendars":["家族"],"errors":["カレンダー「家族」の予定を取得できませんでした: googleapi: Error 404: Not Found, notFound"]}
 {"time":"...","severity":"ERROR","message":"フラグか設定に不備があります。予定の取得も通知もせずに終了します","problems":["calendars[0].label: 必須です"]}
 ```
 

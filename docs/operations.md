@@ -55,12 +55,19 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 1回の実行は、次の span になる。失敗したところの span は、status が Error になる。
 
 ```
-notify-schedule        1回の実行（schedule.date・schedule.calendars・schedule.events・notify.messages・notify.dry_run）
-├─ fetch_schedule      予定の取得（schedule.calendars・schedule.events）
+notify-schedule        1回の実行（schedule.date・schedule.calendars・schedule.events・schedule.failed_calendars・
+│                      schedule.failed_calendar_labels・notify.messages・notify.dry_run）
+├─ fetch_schedule      予定の取得（schedule.calendars・schedule.events・schedule.failed_calendars）
 │  └─ fetch_calendar   カレンダーごとの取得（calendar.label・calendar.events）
 │     └─ HTTP GET      Google Calendar API の呼び出し
 └─ notify              通知（notify.messages・notify.dry_run）。予定がなく通知しないときは出ない
    └─ POST /notify     nandemo-oshirase の呼び出し（この下に nandemo-oshirase の span がつく）
+```
+
+一部のカレンダーの予定を取得できなかったときは、取得できた分を通知して終了コードは `0` になるが、`notify-schedule`・`fetch_schedule`・その `fetch_calendar` の span は status が Error になる。どのカレンダーかは `schedule.failed_calendar_labels` か、`fetch_calendar` の `calendar.label` でわかる。失敗した実行は、次の TraceQL で探せる。
+
+```
+{ resource.service.name = "notify-schedule" && name = "notify-schedule" && status = error }
 ```
 
 カレンダーの ID は span に出さない（ラベルで見分ける）。HTTP の span の URL（`url.full`）やエラーの本文に入るカレンダーの ID は `{calendarId}`、nandemo-oshirase のエンドポイントのホストは `{nandemo-oshirase}` に置き換えて送っている。

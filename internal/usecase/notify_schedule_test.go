@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -13,8 +14,9 @@ import (
 
 // fakeSource は、決まった予定かエラーを返す ScheduleSource。呼ばれた引数を記録する。
 type fakeSource struct {
-	events []domain.Event
-	err    error
+	events   []domain.Event
+	failures []CalendarFailure
+	err      error
 	// onFetch は、Fetch の中で呼ぶ（キャンセルの再現に使う）
 	onFetch func()
 
@@ -23,7 +25,7 @@ type fakeSource struct {
 	gotDate domain.Date
 }
 
-func (s *fakeSource) Fetch(_ context.Context, cals []domain.Calendar, d domain.Date) (domain.DailySchedule, error) {
+func (s *fakeSource) Fetch(_ context.Context, cals []domain.Calendar, d domain.Date) (FetchResult, error) {
 	s.calls++
 	s.gotCals = cals
 	s.gotDate = d
@@ -31,9 +33,9 @@ func (s *fakeSource) Fetch(_ context.Context, cals []domain.Calendar, d domain.D
 		s.onFetch()
 	}
 	if s.err != nil {
-		return domain.DailySchedule{}, s.err
+		return FetchResult{}, s.err
 	}
-	return domain.DailySchedule{Date: d, Events: s.events}, nil
+	return FetchResult{Schedule: domain.DailySchedule{Date: d, Events: s.events}, Failures: s.failures}, nil
 }
 
 // fakeNotifier は、受け取ったメッセージを記録する Notifier。
@@ -100,7 +102,7 @@ func TestRunNotifiesComposedMessagesOnce(t *testing.T) {
 		t.Errorf("Notify に渡ったメッセージ = %v, want %v", notifier.got, want)
 	}
 
-	if result != (Result{Events: 2, Messages: len(want)}) || !result.Notified() {
+	if !reflect.DeepEqual(result, Result{Events: 2, Messages: len(want)}) || !result.Notified() || result.Partial() {
 		t.Errorf("Run() = %+v (Notified=%v), want Events=2, Messages=%d, Notified=true", result, result.Notified(), len(want))
 	}
 }
@@ -117,7 +119,7 @@ func TestRunDoesNotNotifyWhenNoEvents(t *testing.T) {
 	if notifier.calls != 0 {
 		t.Errorf("予定がないのに Notify が %d 回呼ばれた", notifier.calls)
 	}
-	if result != (Result{}) || result.Notified() {
+	if !reflect.DeepEqual(result, Result{}) || result.Notified() {
 		t.Errorf("Run() = %+v (Notified=%v), want ゼロ値", result, result.Notified())
 	}
 }
@@ -155,6 +157,29 @@ func TestRunFailures(t *testing.T) {
 			wantFetches: 1,
 		},
 		{
+			name: "すべてのカレンダーの取得に失敗したら通知しない",
+			cals: testCalendars,
+			source: &fakeSource{failures: []CalendarFailure{
+				{Calendar: testCalendars[0], Err: errFetch},
+				{Calendar: testCalendars[1], Err: errFetch},
+			}},
+			notifier:    &fakeNotifier{},
+			wantErr:     errFetch,
+			wantErrText: "カレンダー「家族」の予定を取得できませんでした",
+			wantFetches: 1,
+		},
+		{
+			name:         "一部の取得に失敗し、通知にも失敗したらエラーを返す",
+			cals:         testCalendars,
+			source:       &fakeSource{events: testEvents(testDate(t))[:1], failures: []CalendarFailure{{Calendar: testCalendars[1], Err: errFetch}}},
+			notifier:     &fakeNotifier{err: errNotify},
+			wantErr:      errNotify,
+			wantErrText:  "2026-11-13 の予定の通知に失敗しました",
+			wantFetches:  1,
+			wantNotifies: 1,
+			wantResult:   Result{Events: 1, Failures: []CalendarFailure{{Calendar: testCalendars[1], Err: errFetch}}},
+		},
+		{
 			name:         "通知に失敗したらエラーを返す",
 			cals:         testCalendars,
 			source:       &fakeSource{events: testEvents(d)},
@@ -181,10 +206,61 @@ func TestRunFailures(t *testing.T) {
 			if tt.source.calls != tt.wantFetches || tt.notifier.calls != tt.wantNotifies {
 				t.Errorf("Fetch = %d 回, Notify = %d 回, want %d 回, %d 回", tt.source.calls, tt.notifier.calls, tt.wantFetches, tt.wantNotifies)
 			}
-			if result != tt.wantResult || result.Notified() {
+			if !reflect.DeepEqual(result, tt.wantResult) || result.Notified() {
 				t.Errorf("Run() = %+v, want %+v（Notified=false）", result, tt.wantResult)
 			}
 		})
+	}
+}
+
+func TestRunNotifiesPartialSchedule(t *testing.T) {
+	d := testDate(t)
+	errFetch := errors.New("取得元のエラー")
+	failures := []CalendarFailure{{Calendar: testCalendars[1], Err: errFetch}}
+	work := testEvents(d)[:1] // 「仕事」の予定だけ取得できた
+
+	tests := []struct {
+		name   string
+		events []domain.Event
+	}{
+		{name: "取得できた分の予定を、取得できなかったカレンダーの知らせと一緒に通知する", events: work},
+		{name: "取得できた分に予定がなくても、知らせを通知する", events: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := &fakeSource{events: tt.events, failures: failures}
+			notifier := &fakeNotifier{}
+
+			result, err := NewNotifySchedule(source, notifier).Run(context.Background(), testCalendars, d)
+			if err != nil {
+				t.Fatalf("Run(): %v", err)
+			}
+
+			want := domain.ComposeMessages(domain.DailySchedule{
+				Date: d, Events: tt.events, FailedCalendars: []domain.Calendar{testCalendars[1]},
+			})
+			if notifier.calls != 1 || !slices.Equal(notifier.got, want) {
+				t.Errorf("Notify = %d 回 %v, want 1 回 %v", notifier.calls, notifier.got, want)
+			}
+			wantResult := Result{Events: len(tt.events), Messages: len(want), Failures: failures}
+			if !reflect.DeepEqual(result, wantResult) || !result.Partial() {
+				t.Errorf("Run() = %+v, want %+v（Partial=true）", result, wantResult)
+			}
+			if got := result.FailedLabels(); !slices.Equal(got, []string{"家族"}) {
+				t.Errorf("FailedLabels() = %v, want [家族]", got)
+			}
+		})
+	}
+}
+
+func TestCalendarFailureError(t *testing.T) {
+	errFetch := errors.New("backend error")
+	f := CalendarFailure{Calendar: domain.Calendar{ID: "family@example.com", Label: "家族"}, Err: errFetch}
+	if !errors.Is(f, errFetch) {
+		t.Errorf("errors.Is(%v, %v) = false", f, errFetch)
+	}
+	if got := f.Error(); !strings.Contains(got, "「家族」") || strings.Contains(got, "family@example.com") {
+		t.Errorf("Error() = %q, want ラベルを含み、ID を含まない", got)
 	}
 }
 

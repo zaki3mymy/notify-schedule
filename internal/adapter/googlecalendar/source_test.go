@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -142,10 +143,14 @@ func TestFetch(t *testing.T) {
 		{ID: "family@example.com", Label: "家族"},
 	}
 
-	got, err := s.Fetch(context.Background(), cals, d)
+	fetched, err := s.Fetch(context.Background(), cals, d)
 	if err != nil {
 		t.Fatalf("Fetch(): %v", err)
 	}
+	if len(fetched.Failures) != 0 {
+		t.Errorf("Failures = %v, want なし", fetched.Failures)
+	}
+	got := fetched.Schedule
 	if got.Date != d {
 		t.Errorf("Date = %v, want %v", got.Date, d)
 	}
@@ -197,8 +202,8 @@ func TestFetchNoEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch(): %v", err)
 	}
-	if !got.IsEmpty() {
-		t.Errorf("予定がないのに Events = %+v", got.Events)
+	if !got.Schedule.IsEmpty() || len(got.Failures) != 0 {
+		t.Errorf("予定がないのに Events = %+v, Failures = %v", got.Schedule.Events, got.Failures)
 	}
 }
 
@@ -222,22 +227,27 @@ func TestFetchErrors(t *testing.T) {
 	}
 
 	got, err := s.Fetch(context.Background(), cals, d)
-	if err == nil {
-		t.Fatalf("Fetch() = %+v, want error", got)
+	if err != nil {
+		t.Fatalf("Fetch(): %v（失敗したカレンダーは Failures で返す）", err)
 	}
-	msg := err.Error()
-	// 失敗したカレンダーは、すべてラベルでわかる
-	for _, label := range []string{"落ちている1", "壊れた予定", "落ちている2"} {
-		if !strings.Contains(msg, "「"+label+"」") {
-			t.Errorf("エラーにカレンダー「%s」が含まれていない: %q", label, msg)
+	// 失敗したカレンダーは、すべて Failures に入る（試した順）
+	var labels []string
+	for _, f := range got.Failures {
+		labels = append(labels, f.Calendar.Label)
+		if f.Err == nil {
+			t.Errorf("カレンダー「%s」の Err が nil", f.Calendar.Label)
+		}
+		// エラーの文言にはラベルが入り、カレンダーの ID（メールアドレスのことがある）は入らない
+		if msg := f.Error(); !strings.Contains(msg, "「"+f.Calendar.Label+"」") || strings.Contains(msg, "@example.com") {
+			t.Errorf("Failures の Error() = %q", msg)
 		}
 	}
-	if strings.Contains(msg, "「正常」") {
-		t.Errorf("成功したカレンダーがエラーに含まれている: %q", msg)
+	if want := []string{"落ちている1", "壊れた予定", "落ちている2"}; !slices.Equal(labels, want) {
+		t.Errorf("Failures のラベル = %v, want %v", labels, want)
 	}
-	// カレンダーの ID（メールアドレスのことがある）はエラーに含めない
-	if strings.Contains(msg, "@example.com") {
-		t.Errorf("エラーにカレンダーの ID が含まれている: %q", msg)
+	// 取得できたカレンダーの予定は返す
+	if len(got.Schedule.Events) != 1 || got.Schedule.Events[0].CalendarLabel != "正常" {
+		t.Errorf("Events = %+v, want 「正常」の1件", got.Schedule.Events)
 	}
 	// 1つ失敗しても、ほかのカレンダーも試す
 	if len(f.ids) != 4 {

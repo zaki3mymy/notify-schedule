@@ -67,8 +67,11 @@ func TestFetchRecordsSpans(t *testing.T) {
 	}
 	parent := schedules[0]
 	attrs := spanAttrs(parent)
-	if attrs["schedule.calendars"].AsInt64() != 2 || attrs["schedule.events"].AsInt64() != 3 {
-		t.Errorf("fetch_schedule の属性 = %v, want calendars=2, events=3", attrs)
+	if attrs["schedule.calendars"].AsInt64() != 2 || attrs["schedule.events"].AsInt64() != 3 || attrs["schedule.failed_calendars"].AsInt64() != 0 {
+		t.Errorf("fetch_schedule の属性 = %v, want calendars=2, events=3, failed_calendars=0", attrs)
+	}
+	if parent.Status().Code == codes.Error {
+		t.Errorf("fetch_schedule の status = %v, want Error ではない", parent.Status())
 	}
 
 	calendars := spansNamed(rec, "fetch_calendar")
@@ -93,8 +96,12 @@ func TestFetchErrorSpansDoNotContainCalendarID(t *testing.T) {
 	f := &fakeCalendar{failing: map[string]bool{"down@example.com": true}}
 	s := newSource(t, f)
 	cals := []domain.Calendar{{ID: "down@example.com", Label: "落ちている"}}
-	if _, err := s.Fetch(context.Background(), cals, testDate(t)); err == nil {
-		t.Fatal("Fetch() がエラーを返さない")
+	got, err := s.Fetch(context.Background(), cals, testDate(t))
+	if err != nil || len(got.Failures) != 1 {
+		t.Fatalf("Fetch() = %+v, %v, want Failures が1件", got, err)
+	}
+	if n := spanAttrs(spansNamed(rec, "fetch_schedule")[0])["schedule.failed_calendars"].AsInt64(); n != 1 {
+		t.Errorf("fetch_schedule の schedule.failed_calendars = %d, want 1", n)
 	}
 
 	for _, name := range []string{"fetch_schedule", "fetch_calendar"} {

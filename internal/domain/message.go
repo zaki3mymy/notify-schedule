@@ -47,6 +47,7 @@ const (
 	allDayMark    = "[終日]"
 	continuedMark = "（続き）"
 	ellipsis      = "…"
+	failedMark    = "※"
 	timeLayout    = "15:04"
 )
 
@@ -62,8 +63,17 @@ var weekdays = [...]string{"日", "月", "火", "水", "木", "金", "土"}
 //
 //	[終日] 誕生日（家族）
 //	09:00-10:00 打ち合わせ（仕事）
+//
+// 予定を取得できなかったカレンダーがあるときは、1通目の見出しのあとに、そのことを書く。
+// このときは、ほかのカレンダーに予定が1件もなくても送る（予定がないのか、取得できなかったのかを区別できるようにするため）。
+//
+//	11/12(木) の予定
+//
+//	※ カレンダー「仕事」の予定を取得できませんでした
+//
+//	[終日] 誕生日（家族）
 func ComposeMessages(s DailySchedule) []Message {
-	if s.IsEmpty() {
+	if s.IsEmpty() && !s.IsPartial() {
 		return nil
 	}
 
@@ -73,22 +83,40 @@ func ComposeMessages(s DailySchedule) []Message {
 	// 1行だけで上限を超える予定は、長い方の見出し（続き）と1通に収まるよう、末尾を切り詰める
 	maxLine := MaxMessageLength - messageLength(headings[1]) - 1
 
-	// 見出しと空行のあとに、予定を1行ずつ足す。足すと上限を超えるときは、次のメッセージに移る
+	// 取得できなかったカレンダーの知らせ。1通目の見出しのあとに、空行で挟んで入れる
+	// （短い方の見出しと知らせだけなら、maxLine に収めれば1通に収まる）
+	var notice string
+	if s.IsPartial() {
+		notice = fitLine(formatFailedCalendars(s.FailedCalendars), maxLine)
+	}
+	// start は、メッセージを見出し（と、1通目なら知らせ）から書き始める
+	// （見出しだけのメッセージは作らない。予定がないときは知らせがある）
 	var texts []string
 	var b strings.Builder
+	start := func() {
+		b.WriteString(headings[min(len(texts), 1)])
+		if len(texts) == 0 && notice != "" {
+			b.WriteString("\n")
+			b.WriteString(notice)
+			b.WriteString("\n")
+		}
+	}
+
+	// 見出しと空行のあとに、予定を1行ずつ足す。足すと上限を超えるときは、次のメッセージに移る
+	// （2通目以降は見出しと1行だけなら必ず収まるので、移った先では超えない）
+	start()
 	for _, e := range s.SortedEvents() {
 		line := fitLine(formatEvent(s, e), maxLine)
-		if b.Len() > 0 && messageLength(b.String())+1+messageLength(line) > MaxMessageLength {
-			texts = append(texts, b.String())
+		if messageLength(b.String())+1+messageLength(line) > MaxMessageLength {
+			texts = append(texts, strings.TrimSuffix(b.String(), "\n"))
 			b.Reset()
-		}
-		if b.Len() == 0 {
-			b.WriteString(headings[min(len(texts), 1)])
+			start()
 		}
 		b.WriteString("\n")
 		b.WriteString(line)
 	}
-	texts = append(texts, b.String())
+	// 予定がないとき（取得できなかったカレンダーの知らせだけのとき）は、知らせのあとの空行を除く
+	texts = append(texts, strings.TrimSuffix(b.String(), "\n"))
 
 	messages := make([]Message, 0, len(texts))
 	for _, t := range texts {
@@ -113,6 +141,18 @@ func formatEvent(s DailySchedule, e Event) string {
 		line += "（" + label + "）"
 	}
 	return line
+}
+
+// formatFailedCalendars は、取得できなかったカレンダーの知らせを1行の文字列にする
+// （例: 「※ カレンダー「仕事」「家族」の予定を取得できませんでした」）。
+func formatFailedCalendars(cals []Calendar) string {
+	var b strings.Builder
+	b.WriteString(failedMark + " カレンダー")
+	for _, c := range cals {
+		b.WriteString("「" + singleLine(c.Label) + "」")
+	}
+	b.WriteString("の予定を取得できませんでした")
+	return b.String()
 }
 
 // singleLine は、改行などの空白をまとめて1つの空白にし、前後の空白を除く（改行を含む文字列で行が崩れないようにする）。
