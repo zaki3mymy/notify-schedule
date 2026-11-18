@@ -74,6 +74,46 @@ notify-schedule        1回の実行（schedule.date・schedule.calendars・sche
 
 トレースの送り方は [architecture.md](./architecture.md#トレースの送り方) を参照。
 
+## うまくいかないとき
+
+### シークレットのバージョンが DESTROYED で、apply や実行が失敗する
+
+```
+Failed to access secret .../secrets/notify-schedule-config/versions/latest: Secret Version [.../versions/2] is in DESTROYED state.
+```
+
+`latest`（最後に作ったバージョン）が消されている。前の有効なバージョンには戻らないので、有効な設定を新しいバージョンとして入れる。
+
+```shell
+# 有効なバージョンを確かめる
+gcloud secrets versions list notify-schedule-config --project=<プロジェクト ID>
+
+# 有効なバージョンの中身を、新しいバージョンとして入れ直す（手元の設定ファイルを --data-file に渡してもよい）
+gcloud secrets versions access <有効なバージョン> --secret=notify-schedule-config --project=<プロジェクト ID> \
+  | gcloud secrets versions add notify-schedule-config --project=<プロジェクト ID> --data-file=-
+```
+
+入れたあと、元の有効なバージョンは消してよい（有効なバージョンを1つにする）。apply で失敗していたときは、続けて次の項目も行う。
+
+### Job が「error state」で実行できない
+
+```
+FAILED_PRECONDITION: Job 'notify-schedule' cannot be run because is in an error state. Please check the job's Ready status condition.
+```
+
+Job の更新が途中で失敗すると（上のシークレットの失敗など）、Job の Ready が False のまま残る。原因を直しても、Cloud Run は自動では検証し直さない。また、Job の定義はもう新しくなっているので、CD を再実行しても Terraform は `No changes` になり、Job に触れない。Job を更新し直して、検証させる。
+
+```shell
+# Ready の状態と理由を確かめる
+gcloud run jobs describe notify-schedule --project=<プロジェクト ID> --region=asia-northeast1 --format='yaml(status.conditions)'
+
+# 中身は変えずにラベルだけ足して、更新し直す（Terraform で管理していないラベルは、差分にならない）
+gcloud run jobs update notify-schedule --project=<プロジェクト ID> --region=asia-northeast1 \
+  --update-labels=redeployed-at=$(date +%Y%m%d%H%M%S)
+```
+
+Ready が True になったら、CD の失敗したジョブを再実行する（スモークテストで確かめる）。
+
 ## 切り戻し
 
 ### アプリを前のリリースに戻す
