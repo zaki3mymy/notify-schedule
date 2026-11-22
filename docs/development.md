@@ -9,7 +9,7 @@
 | go | ビルドとテスト |
 | golangci-lint | 静的解析と整形 |
 | gnumake | 開発の操作（make のターゲット） |
-| pre-commit | コミット前のチェック |
+| pre-commit | コミット前のチェック。開発環境に入ると、フックが自動で入る（flake.nix の `shellHook`） |
 | actionlint | GitHub Actions のワークフローの lint |
 | tflint | Terraform の lint |
 
@@ -18,8 +18,7 @@ terraform（1.17 以上）は flake に入れていないので、別に入れ�
 [direnv](https://direnv.net/) を使うと、このディレクトリに入ったときに自動でツールが PATH に入る（[.envrc](../.envrc)）。direnv を使わないときは `nix develop` を実行する。
 
 ```shell
-direnv allow   # または nix develop
-pre-commit install
+direnv allow   # または nix develop（pre-commit のフックもここで入る）
 make build
 ```
 
