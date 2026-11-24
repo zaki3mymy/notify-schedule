@@ -7,10 +7,11 @@ import (
 	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// redactor は、トレースに出したくない値（カレンダーの ID、エンドポイントのホストなど）を、
+// redactor は、トレースとログに出したくない値（カレンダーの ID、エンドポイントのホストなど）を、
 // 代わりの文字列に置き換える。
 //
 // HTTP の span の url.full・server.address や、エラーの本文（URL を含むことがある）には、これらの値が
@@ -110,22 +111,69 @@ func (s redactedSpan) Status() sdktrace.Status {
 	return st
 }
 
-// redactAttributes は、文字列（と文字列の配列）の属性の値を置き換える。
+// redactAttributes は、属性の値の文字列を置き換える。
 func (r *redactor) redactAttributes(attrs []attribute.KeyValue) []attribute.KeyValue {
 	out := make([]attribute.KeyValue, len(attrs))
 	for i, kv := range attrs {
-		switch kv.Value.Type() {
-		case attribute.STRING:
-			out[i] = attribute.String(string(kv.Key), r.redact(kv.Value.AsString()))
-		case attribute.STRINGSLICE:
-			vs := kv.Value.AsStringSlice()
-			for j := range vs {
-				vs[j] = r.redact(vs[j])
-			}
-			out[i] = attribute.StringSlice(string(kv.Key), vs)
-		default:
-			out[i] = kv
-		}
+		out[i] = attribute.KeyValue{Key: kv.Key, Value: r.redactValue(kv.Value)}
 	}
 	return out
 }
+
+// redactValue は、値の中の文字列を置き換える。配列とマップ（ログの属性で使う）は、中の値もたどる。
+func (r *redactor) redactValue(v attribute.Value) attribute.Value {
+	switch v.Type() {
+	case attribute.STRING:
+		return attribute.StringValue(r.redact(v.AsString()))
+	case attribute.STRINGSLICE:
+		vs := v.AsStringSlice()
+		for i := range vs {
+			vs[i] = r.redact(vs[i])
+		}
+		return attribute.StringSliceValue(vs)
+	case attribute.SLICE:
+		vs := v.AsSlice()
+		out := make([]attribute.Value, len(vs))
+		for i, e := range vs {
+			out[i] = r.redactValue(e)
+		}
+		return attribute.SliceValue(out...)
+	case attribute.MAP:
+		kvs := v.AsMap()
+		out := make([]attribute.KeyValue, len(kvs))
+		for i, kv := range kvs {
+			out[i] = attribute.KeyValue{Key: attribute.Key(r.redact(string(kv.Key))), Value: r.redactValue(kv.Value)}
+		}
+		return attribute.MapValue(out...)
+	default:
+		return v
+	}
+}
+
+// redactingProcessor は、ログの本文と属性の伏せる値を置き換えてから、next に渡す Processor。
+//
+// slog のログには、エラーの文字列（URL を含むことがある）やカレンダーの ID がそのまま入るので、
+// トレースと同じく、送る直前にまとめて置き換える。
+type redactingProcessor struct {
+	next sdklog.Processor
+	r    *redactor
+}
+
+func (p *redactingProcessor) Enabled(ctx context.Context, param sdklog.EnabledParameters) bool {
+	return p.next.Enabled(ctx, param)
+}
+
+func (p *redactingProcessor) OnEmit(ctx context.Context, record *sdklog.Record) error {
+	record.SetBody(p.r.redactValue(record.Body()))
+	attrs := make([]attribute.KeyValue, 0, record.AttributesLen())
+	record.WalkAttributes(func(kv attribute.KeyValue) bool {
+		attrs = append(attrs, attribute.KeyValue{Key: kv.Key, Value: p.r.redactValue(kv.Value)})
+		return true
+	})
+	record.SetAttributes(attrs...)
+	return p.next.OnEmit(ctx, record)
+}
+
+func (p *redactingProcessor) Shutdown(ctx context.Context) error { return p.next.Shutdown(ctx) }
+
+func (p *redactingProcessor) ForceFlush(ctx context.Context) error { return p.next.ForceFlush(ctx) }
