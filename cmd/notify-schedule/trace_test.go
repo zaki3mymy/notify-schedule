@@ -31,7 +31,7 @@ func (h fakeHider) Hide(placeholder string, values ...string) {
 
 func TestHideConfigInTraces(t *testing.T) {
 	h := fakeHider{}
-	hideConfigInTraces(h, config.Config{
+	hideConfigInTelemetry(h, config.Config{
 		Calendars: []domain.Calendar{
 			{ID: "work@example.com", Label: "仕事"},
 			{ID: "family@group.calendar.google.com", Label: "家族"},
