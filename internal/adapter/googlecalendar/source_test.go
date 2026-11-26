@@ -3,6 +3,7 @@ package googlecalendar
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -30,9 +31,19 @@ type fakeCalendar struct {
 	// failing のカレンダー ID には、500 を返す
 	failing map[string]bool
 
-	mu      sync.Mutex
-	queries []url.Values
-	ids     []string
+	// release が nil でなければ、閉じられるまで応答を待たせる（同時に処理中のリクエストを数えるのに使う）
+	release chan struct{}
+
+	mu       sync.Mutex
+	queries  []url.Values
+	ids      []string
+	inFlight int
+}
+
+func (f *fakeCalendar) currentInFlight() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.inFlight
 }
 
 func (f *fakeCalendar) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +57,16 @@ func (f *fakeCalendar) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.queries = append(f.queries, r.URL.Query())
 	f.ids = append(f.ids, id)
+	f.inFlight++
 	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.inFlight--
+		f.mu.Unlock()
+	}()
+	if f.release != nil {
+		<-f.release
+	}
 
 	if f.failing[id] {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -172,9 +192,18 @@ func TestFetch(t *testing.T) {
 		}
 	}
 
-	// work は2ページ、family は1ページで、合わせて3回呼ばれる
+	// work は2ページ、family は1ページで、合わせて3回呼ばれる（カレンダーは並行して取得するので、順は決まらない）
 	if len(f.queries) != 3 {
 		t.Fatalf("リクエストの数 = %d, want 3", len(f.queries))
+	}
+	var workTokens []string
+	for i, id := range f.ids {
+		if id == "work@example.com" {
+			workTokens = append(workTokens, f.queries[i].Get("pageToken"))
+		}
+	}
+	if want := []string{"", "1"}; !slices.Equal(workTokens, want) {
+		t.Errorf("work の pageToken = %q, want %q", workTokens, want)
 	}
 	for i, q := range f.queries {
 		wantParams := map[string]string{
@@ -190,9 +219,6 @@ func TestFetch(t *testing.T) {
 				t.Errorf("リクエスト[%d] の %s = %q, want %q", i, k, q.Get(k), v)
 			}
 		}
-	}
-	if f.queries[1].Get("pageToken") != "1" {
-		t.Errorf("2ページ目の pageToken = %q, want %q", f.queries[1].Get("pageToken"), "1")
 	}
 }
 
@@ -230,7 +256,7 @@ func TestFetchErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch(): %v（失敗したカレンダーは Failures で返す）", err)
 	}
-	// 失敗したカレンダーは、すべて Failures に入る（試した順）
+	// 失敗したカレンダーは、すべて Failures に入る（cals の順）
 	var labels []string
 	for _, f := range got.Failures {
 		labels = append(labels, f.Calendar.Label)
@@ -252,6 +278,60 @@ func TestFetchErrors(t *testing.T) {
 	// 1つ失敗しても、ほかのカレンダーも試す
 	if len(f.ids) != 4 {
 		t.Errorf("リクエストしたカレンダーの数 = %d, want 4（%v）", len(f.ids), f.ids)
+	}
+}
+
+func TestFetchConcurrently(t *testing.T) {
+	pages := map[string][][]map[string]any{}
+	var cals []domain.Calendar
+	for i := range maxConcurrentFetches + 3 {
+		id := fmt.Sprintf("cal%d@example.com", i)
+		pages[id] = [][]map[string]any{{
+			timed(fmt.Sprintf("e%d", i), fmt.Sprintf("予定%d", i), "2026-11-13T09:00:00+09:00", "2026-11-13T10:00:00+09:00"),
+		}}
+		cals = append(cals, domain.Calendar{ID: id, Label: fmt.Sprintf("カレンダー%d", i)})
+	}
+	f := &fakeCalendar{pages: pages, release: make(chan struct{})}
+	s := newSource(t, f)
+
+	type fetchReturn struct {
+		result usecase.FetchResult
+		err    error
+	}
+	done := make(chan fetchReturn, 1)
+	go func() {
+		r, err := s.Fetch(context.Background(), cals, testDate(t))
+		done <- fetchReturn{r, err}
+	}()
+
+	// 上限の数まで、同時にリクエストが届く
+	deadline := time.Now().Add(5 * time.Second)
+	for f.currentInFlight() < maxConcurrentFetches {
+		if time.Now().After(deadline) {
+			close(f.release)
+			t.Fatalf("同時に処理中のリクエストの数 = %d, want %d", f.currentInFlight(), maxConcurrentFetches)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// 上限を超えては届かない
+	time.Sleep(50 * time.Millisecond)
+	if n := f.currentInFlight(); n != maxConcurrentFetches {
+		t.Errorf("同時に処理中のリクエストの数 = %d, want %d", n, maxConcurrentFetches)
+	}
+	close(f.release)
+
+	got := <-done
+	if got.err != nil || len(got.result.Failures) != 0 {
+		t.Fatalf("Fetch() = %+v, %v", got.result, got.err)
+	}
+	// 予定は、取得が終わった順ではなく cals の順に並ぶ
+	if len(got.result.Schedule.Events) != len(cals) {
+		t.Fatalf("len(Events) = %d, want %d", len(got.result.Schedule.Events), len(cals))
+	}
+	for i, e := range got.result.Schedule.Events {
+		if e.CalendarLabel != cals[i].Label {
+			t.Errorf("Events[%d] のカレンダー = %q, want %q", i, e.CalendarLabel, cals[i].Label)
+		}
 	}
 }
 

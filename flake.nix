@@ -34,6 +34,11 @@
 
           # go.mod の go より新しいツールチェーンを勝手に取得せず、nixpkgs の go を使う
           GOTOOLCHAIN = "local";
+
+          # 開発環境に入ったときに、pre-commit のフックを入れる（入っていれば何もしない）
+          shellHook = ''
+            pre-commit install
+          '';
         };
       }
     );

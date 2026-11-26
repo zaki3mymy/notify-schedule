@@ -10,19 +10,45 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/propagation"
 )
 
 const testOTLPAuth = "Basic dGVzdDp0b2tlbg==" //nolint:gosec // テスト用のダミーの値（本物の認証情報ではない）
 
-// restoreOTelGlobals は、テストの終わりに、グローバルの TracerProvider と propagator を元に戻す。
+// restoreOTelGlobals は、テストの終わりに、グローバルの TracerProvider・LoggerProvider・propagator を元に戻す。
 func restoreOTelGlobals(t *testing.T) {
 	t.Helper()
-	tp, prop := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	tp, lp, prop := otel.GetTracerProvider(), otel.GetLoggerProvider(), otel.GetTextMapPropagator()
 	t.Cleanup(func() {
 		otel.SetTracerProvider(tp)
+		otel.SetLoggerProvider(lp)
 		otel.SetTextMapPropagator(prop)
 	})
+}
+
+// emitLog は、グローバルの LoggerProvider に、本文が body のログを1つ送る。
+func emitLog(body string, attrs ...attribute.KeyValue) {
+	var r log.Record
+	r.SetBody(attribute.StringValue(body))
+	r.AddAttributes(attrs...)
+	otel.GetLoggerProvider().Logger("test").Emit(context.Background(), r)
+}
+
+// requestByPath は、パスが path のリクエストを返す。
+func requestByPath(t *testing.T, reqs []otlpRequest, path string) otlpRequest {
+	t.Helper()
+	var found []otlpRequest
+	for _, r := range reqs {
+		if r.path == path {
+			found = append(found, r)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%s へのリクエストの数 = %d, want 1", path, len(found))
+	}
+	return found[0]
 }
 
 // envMap は、map から読む LookupEnv。
@@ -62,7 +88,7 @@ func newOTLPServer(t *testing.T) (*httptest.Server, func() []otlpRequest) {
 	}
 }
 
-func TestSetupSendsSpans(t *testing.T) {
+func TestSetupSendsSpansAndLogs(t *testing.T) {
 	tests := []struct {
 		name     string
 		endpoint func(srvURL string) string
@@ -85,26 +111,27 @@ func TestSetupSendsSpans(t *testing.T) {
 
 			_, span := otel.Tracer("test").Start(context.Background(), "test")
 			span.End()
+			emitLog("テストのログ")
 			if err := p.Shutdown(); err != nil {
 				t.Fatalf("Shutdown(): %v", err)
 			}
 
 			reqs := got()
-			if len(reqs) != 1 {
-				t.Fatalf("OTLP のリクエストの数 = %d, want 1", len(reqs))
+			if len(reqs) != 2 {
+				t.Fatalf("OTLP のリクエストの数 = %d, want 2（トレースとログ）", len(reqs))
 			}
-			if reqs[0].path != "/otlp/v1/traces" {
-				t.Errorf("送信先のパス = %q, want /otlp/v1/traces", reqs[0].path)
+			for _, path := range []string{"/otlp/v1/traces", "/otlp/v1/logs"} {
+				req := requestByPath(t, reqs, path)
+				if req.authorization != testOTLPAuth {
+					t.Errorf("%s の Authorization = %q, want %q", path, req.authorization, testOTLPAuth)
+				}
+				// service.name の既定値を送る
+				if !strings.Contains(string(req.body), "test-service") {
+					t.Errorf("%s の本文に service.name（test-service）が含まれていない", path)
+				}
 			}
-			if reqs[0].authorization != testOTLPAuth {
-				t.Errorf("Authorization = %q, want %q", reqs[0].authorization, testOTLPAuth)
-			}
-			if len(reqs[0].body) == 0 {
-				t.Error("本文が空")
-			}
-			// service.name の既定値を送る
-			if !strings.Contains(string(reqs[0].body), "test-service") {
-				t.Error("本文に service.name（test-service）が含まれていない")
+			if !strings.Contains(string(requestByPath(t, reqs, "/otlp/v1/logs").body), "テストのログ") {
+				t.Error("ログの本文が送られていない")
 			}
 			// 呼び出し先にトレースの ID を引き継ぐ
 			if _, ok := otel.GetTextMapPropagator().(propagation.TraceContext); !ok {
@@ -116,7 +143,7 @@ func TestSetupSendsSpans(t *testing.T) {
 
 func TestSetupWithoutEnvSendsNothing(t *testing.T) {
 	restoreOTelGlobals(t)
-	before := otel.GetTracerProvider()
+	before, beforeLP := otel.GetTracerProvider(), otel.GetLoggerProvider()
 
 	p, err := Setup(context.Background(), "test-service", envMap(nil))
 	if err != nil {
@@ -129,6 +156,9 @@ func TestSetupWithoutEnvSendsNothing(t *testing.T) {
 	}
 	if otel.GetTracerProvider() != before {
 		t.Error("環境変数がないのに TracerProvider が変わった")
+	}
+	if otel.GetLoggerProvider() != beforeLP {
+		t.Error("環境変数がないのに LoggerProvider が変わった")
 	}
 }
 
@@ -144,7 +174,7 @@ func TestSetupInvalidEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			restoreOTelGlobals(t)
-			before := otel.GetTracerProvider()
+			before, beforeLP := otel.GetTracerProvider(), otel.GetLoggerProvider()
 
 			p, err := Setup(context.Background(), "test-service", envMap(tt.env))
 			if err == nil {
@@ -157,6 +187,9 @@ func TestSetupInvalidEnv(t *testing.T) {
 			}
 			if otel.GetTracerProvider() != before {
 				t.Error("失敗したのに TracerProvider が変わった")
+			}
+			if otel.GetLoggerProvider() != beforeLP {
+				t.Error("失敗したのに LoggerProvider が変わった")
 			}
 		})
 	}

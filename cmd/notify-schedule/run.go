@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"time"
 
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -42,9 +43,9 @@ type env struct {
 	// newSource・newNotifier は、検証が済んだあとにだけ呼ぶ（設定に不備があれば外部の API に触れない）
 	newSource   func(ctx context.Context) (usecase.ScheduleSource, error)
 	newNotifier func(cfg config.NandemoOshirase, dryRun bool) (usecase.Notifier, error)
-	// hideInTraces は、設定のうちトレースに出したくない値（カレンダーの ID など）を伏せるようにする。
+	// hideInTelemetry は、設定のうちトレースとログ（Grafana Cloud に送るもの）に出したくない値（カレンダーの ID など）を伏せるようにする。
 	// 設定を読めたら、外部の API を呼ぶ前に呼ぶ
-	hideInTraces func(cfg config.Config)
+	hideInTelemetry func(cfg config.Config)
 }
 
 // run は、フラグと設定を検証してから、ユースケースを実行する。戻り値は終了コード。
@@ -93,20 +94,20 @@ func run(ctx context.Context, args []string, e env) int {
 	}
 
 	if len(problems) > 0 {
-		logger.Error("フラグか設定に不備があります。予定の取得も通知もせずに終了します", "problems", problemList(problems))
+		logger.ErrorContext(ctx, "フラグか設定に不備があります。予定の取得も通知もせずに終了します", "problems", problemList(problems))
 		return exitInvalid
 	}
 
-	e.hideInTraces(cfg)
+	e.hideInTelemetry(cfg)
 
 	if opts.validateConfig {
-		logger.Info("フラグと設定に不備はありません", "date", date.String(), "calendars", len(calendars))
+		logger.InfoContext(ctx, "フラグと設定に不備はありません", "date", date.String(), "calendars", len(calendars))
 		return exitOK
 	}
 
 	// 予定の取得と通知（外部の API を呼ぶところ）を1つの span にする。
 	// アダプタの HTTP の呼び出しの span は、ctx を通じてこの span の子になる
-	ctx, span := otel.Tracer(tracerName).Start(ctx, "notify-schedule", trace.WithAttributes(
+	ctx, span := otel.Tracer(instrumentationName).Start(ctx, "notify-schedule", trace.WithAttributes(
 		attribute.String("schedule.date", date.String()),
 		attribute.Int("schedule.calendars", len(calendars)),
 		attribute.Bool("notify.dry_run", opts.dryRun),
@@ -115,18 +116,18 @@ func run(ctx context.Context, args []string, e env) int {
 
 	source, err := e.newSource(ctx)
 	if err != nil {
-		logger.Error("予定の取得元を用意できませんでした", "error", err.Error())
+		logger.ErrorContext(ctx, "予定の取得元を用意できませんでした", "error", err.Error())
 		recordError(span, err)
 		return exitFailure
 	}
 	notifier, err := e.newNotifier(cfg.NandemoOshirase, opts.dryRun)
 	if err != nil {
-		logger.Error("通知先を用意できませんでした", "error", err.Error())
+		logger.ErrorContext(ctx, "通知先を用意できませんでした", "error", err.Error())
 		recordError(span, err)
 		return exitFailure
 	}
 
-	logger.Info("予定を取得して通知します", "date", date.String(), "calendars", len(calendars), "dry_run", opts.dryRun)
+	logger.InfoContext(ctx, "予定を取得して通知します", "date", date.String(), "calendars", len(calendars), "dry_run", opts.dryRun)
 	result, err := usecase.NewNotifySchedule(source, notifier).Run(ctx, calendars, date)
 	span.SetAttributes(
 		attribute.Int("schedule.events", result.Events),
@@ -137,13 +138,13 @@ func run(ctx context.Context, args []string, e env) int {
 	// （1 にすると Job が再実行し、二重に送られるため）。そのかわり、span を Error にして、トレースで見つけられるようにする
 	if result.Partial() {
 		labels := result.FailedLabels()
-		logger.Warn("一部のカレンダーの予定を取得できませんでした。取得できた分を通知します",
+		logger.WarnContext(ctx, "一部のカレンダーの予定を取得できませんでした。取得できた分を通知します",
 			"date", date.String(), "failed_calendars", labels, "errors", failureList(result.Failures))
 		span.SetAttributes(attribute.StringSlice("schedule.failed_calendar_labels", labels))
 		span.SetStatus(codes.Error, fmt.Sprintf("%d 件のカレンダーの予定を取得できませんでした", len(labels)))
 	}
 	if err != nil {
-		logger.Error("失敗しました", "date", date.String(), "events", result.Events, "error", err.Error())
+		logger.ErrorContext(ctx, "失敗しました", "date", date.String(), "events", result.Events, "error", err.Error())
 		recordError(span, err)
 		return exitFailure
 	}
@@ -151,22 +152,22 @@ func run(ctx context.Context, args []string, e env) int {
 	// 設定の確認（make secret-update・CD のスモークテスト）で、読めないカレンダーに気づけるよう、
 	// --fail-on-partial なら一部の取得の失敗も失敗にする（--dry-run と一緒に使い、再実行で二重に送られないようにする）
 	if result.Partial() && opts.failOnPartial {
-		logger.Error("--fail-on-partial なので、一部のカレンダーの予定を取得できなかったことを失敗にします",
+		logger.ErrorContext(ctx, "--fail-on-partial なので、一部のカレンダーの予定を取得できなかったことを失敗にします",
 			"date", date.String(), "failed_calendars", result.FailedLabels())
 		return exitFailure
 	}
 
 	if !result.Notified() {
-		logger.Info("予定がないので、通知しませんでした", "date", date.String(), "events", result.Events)
+		logger.InfoContext(ctx, "予定がないので、通知しませんでした", "date", date.String(), "events", result.Events)
 		return exitOK
 	}
-	logger.Info("通知しました", "date", date.String(), "events", result.Events, "messages", result.Messages,
+	logger.InfoContext(ctx, "通知しました", "date", date.String(), "events", result.Events, "messages", result.Messages,
 		"failed_calendars", len(result.Failures), "dry_run", opts.dryRun)
 	return exitOK
 }
 
-// tracerName は、run が作る span の計装の名前。
-const tracerName = "github.com/zaki3mymy/notify-schedule"
+// instrumentationName は、run が作る span とログの計装の名前。
+const instrumentationName = "github.com/zaki3mymy/notify-schedule"
 
 // トレースで、伏せた値の代わりに入れる文字列。
 const (
@@ -180,12 +181,12 @@ type hider interface {
 	Hide(placeholder string, values ...string)
 }
 
-// hideConfigInTraces は、設定のうち、トレースに出したくない値を伏せるようにする。
+// hideConfigInTelemetry は、設定のうち、トレースとログ（Grafana Cloud に送るもの）に出したくない値を伏せるようにする。
 //
 //   - カレンダーの ID（メールアドレスのことがある）。HTTP の span の URL やエラーの本文に入る
 //   - nandemo-oshirase のエンドポイントのホスト（API Gateway の URL を公開したくないため）
 //   - nandemo-oshirase の API キー（span には入らないはずだが、念のため）
-func hideConfigInTraces(h hider, cfg config.Config) {
+func hideConfigInTelemetry(h hider, cfg config.Config) {
 	for _, cal := range cfg.Calendars {
 		h.Hide(redactedCalendarID, cal.ID)
 	}
@@ -243,10 +244,18 @@ func newNandemoOshiraseNotifier(cfg config.NandemoOshirase, dryRun bool) (usecas
 	})
 }
 
-// newLogger は、Cloud Logging で読める JSON のログを w に出すロガーを作る。
-// Cloud Logging は severity と message のキーを読むので、slog の level・msg を言い換える。
+// newLogger は、ログを2か所に出すロガーを作る。
+//
+//   - w: Cloud Logging で読める JSON。Cloud Logging は severity と message のキーを読むので、slog の level・msg を言い換える
+//   - OpenTelemetry のグローバルの LoggerProvider（telemetry.Setup が Grafana Cloud に送るよう設定する。設定していなければ捨てる）。
+//     ctx に span があれば、trace_id・span_id が付くので、*Context のメソッドで ctx を渡す
 func newLogger(w io.Writer) *slog.Logger {
-	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{
+	return slog.New(slog.NewMultiHandler(newCloudLoggingHandler(w), otelslog.NewHandler(instrumentationName)))
+}
+
+// newCloudLoggingHandler は、Cloud Logging で読める JSON のログを w に出すハンドラーを作る。
+func newCloudLoggingHandler(w io.Writer) slog.Handler {
+	return slog.NewJSONHandler(w, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if len(groups) > 0 {
 				return a
@@ -259,7 +268,7 @@ func newLogger(w io.Writer) *slog.Logger {
 			}
 			return a
 		},
-	}))
+	})
 }
 
 // severity は、slog のレベルを Cloud Logging の severity にする。

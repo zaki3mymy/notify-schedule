@@ -157,3 +157,55 @@ func TestSetupRedactsSpans(t *testing.T) {
 		t.Error("送った span に伏せた文字列が含まれていない")
 	}
 }
+
+func TestRedactValue(t *testing.T) {
+	r := &redactor{}
+	r.add("{x}", "secret")
+
+	got := r.redactValue(attribute.MapValue(
+		attribute.String("str", "a secret b"),
+		attribute.StringSlice("strs", []string{"secret", "ok"}),
+		attribute.Slice("nested", attribute.MapValue(attribute.String("deep", "secret!"))),
+		attribute.Int("n", 1),
+		attribute.String("secret-key", "v"),
+	))
+	want := attribute.MapValue(
+		attribute.String("str", "a {x} b"),
+		attribute.StringSlice("strs", []string{"{x}", "ok"}),
+		attribute.Slice("nested", attribute.MapValue(attribute.String("deep", "{x}!"))),
+		attribute.Int("n", 1),
+		attribute.String("{x}-key", "v"),
+	)
+	if got.String() != want.String() {
+		t.Errorf("redactValue() = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestSetupRedactsLogs(t *testing.T) {
+	restoreOTelGlobals(t)
+	srv, got := newOTLPServer(t)
+	p, err := Setup(context.Background(), "test-service", envMap(map[string]string{
+		envOTLPEndpoint: srv.URL + "/otlp",
+		envOTLPAuth:     testOTLPAuth,
+	}))
+	if err != nil {
+		t.Fatalf("Setup(): %v", err)
+	}
+	p.Hide("{calendarId}", testCalendarID)
+
+	emitLog("取得できませんでした: "+testCalendarID,
+		attribute.String("error", "GET https://www.googleapis.com/calendar/v3/calendars/family%40group.calendar.google.com/events: 404"),
+		attribute.Slice("failed_calendars", attribute.StringValue(testCalendarID)),
+	)
+	if err := p.Shutdown(); err != nil {
+		t.Fatalf("Shutdown(): %v", err)
+	}
+
+	body := string(requestByPath(t, got(), "/otlp/v1/logs").body)
+	if strings.Contains(body, "family%40group") || strings.Contains(body, testCalendarID) {
+		t.Error("送ったログにカレンダーの ID が含まれている")
+	}
+	if strings.Count(body, "{calendarId}") != 3 {
+		t.Errorf("送ったログの伏せた文字列の数 = %d, want 3（本文・属性・配列の属性）", strings.Count(body, "{calendarId}"))
+	}
+}

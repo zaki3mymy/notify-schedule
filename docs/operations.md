@@ -48,6 +48,16 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 ログの形は [usage.md](./usage.md#ログ) を参照。終了コードが `1`（取得や通知の失敗）のときは、Job が1回だけ再実行する。
 
+### ログ（Grafana Cloud）
+
+ログは、Cloud Logging と同じものを Grafana Cloud にも送っている。Grafana の Explore で、データソース Loki を選び、次の LogQL で探す。
+
+```
+{service_name="notify-schedule"}
+```
+
+span の中で出したログには `trace_id`・`span_id` が付くので、ログからその実行のトレースに、トレースからその実行のログにたどれる。ログの本文・属性に入るカレンダーの ID などは、トレースと同じく伏せて送っている（下の「トレース」を参照）。ただし、設定を読む前に出したログ（設定の不備のログ）は伏せられない。
+
 ### トレース
 
 実行ごとのトレースは Grafana Cloud で見る。Grafana の Explore で、データソース Tempo を選び、`service.name` が `notify-schedule` のものを探す。環境は `deployment.environment.name`（`dev`・`prod`）で絞り込める。
@@ -58,7 +68,7 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 notify-schedule        1回の実行（schedule.date・schedule.calendars・schedule.events・schedule.failed_calendars・
 │                      schedule.failed_calendar_labels・notify.messages・notify.dry_run）
 ├─ fetch_schedule      予定の取得（schedule.calendars・schedule.events・schedule.failed_calendars）
-│  └─ fetch_calendar   カレンダーごとの取得（calendar.label・calendar.events）
+│  └─ fetch_calendar   カレンダーごとの取得（calendar.label・calendar.events）。同時に5つまで並行して取得する
 │     └─ HTTP GET      Google Calendar API の呼び出し
 └─ notify              通知（notify.messages・notify.dry_run）。予定がなく通知しないときは出ない
    └─ POST /notify     nandemo-oshirase の呼び出し（この下に nandemo-oshirase の span がつく）
@@ -72,7 +82,7 @@ notify-schedule        1回の実行（schedule.date・schedule.calendars・sche
 
 カレンダーの ID は span に出さない（ラベルで見分ける）。HTTP の span の URL（`url.full`）やエラーの本文に入るカレンダーの ID は `{calendarId}`、nandemo-oshirase のエンドポイントのホストは `{nandemo-oshirase}` に置き換えて送っている。
 
-トレースの送り方は [architecture.md](./architecture.md#トレースの送り方) を参照。
+トレースとログの送り方は [architecture.md](./architecture.md#トレースとログの送り方) を参照。
 
 ## うまくいかないとき
 

@@ -16,18 +16,18 @@ import (
 	"github.com/zaki3mymy/notify-schedule/internal/telemetry"
 )
 
-// serviceName は、トレースの service.name の既定値（環境変数 OTEL_SERVICE_NAME で上書きできる）。
+// serviceName は、トレースとログの service.name の既定値（環境変数 OTEL_SERVICE_NAME で上書きできる）。
 const serviceName = "notify-schedule"
 
 func main() {
 	// Cloud Run は止めるときに SIGTERM を送る。受け取ったら、通知を始める前なら中断する
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
-	// トレースの準備に失敗しても、通知は止めない（ログに出して、トレースなしで続ける）
+	// トレースとログを送る準備に失敗しても、通知は止めない（標準出力のログに出して、送らずに続ける）
 	logger := newLogger(os.Stdout)
 	tel, err := telemetry.Setup(ctx, serviceName, os.LookupEnv)
 	if err != nil {
-		logger.Warn("トレースを送る準備ができませんでした。トレースなしで続けます", "error", err.Error())
+		logger.Warn("トレースとログを送る準備ができませんでした。送らずに続けます", "error", err.Error())
 	}
 
 	code := run(ctx, os.Args[1:], env{
@@ -37,14 +37,14 @@ func main() {
 		stderr:      os.Stderr,
 		newSource:   newGoogleCalendarSource,
 		newNotifier: newNandemoOshiraseNotifier,
-		// トレースに出したくない値（カレンダーの ID など）は、設定を読んだあとに run が伏せる
-		hideInTraces: func(cfg config.Config) { hideConfigInTraces(tel, cfg) },
+		// トレースとログに出したくない値（カレンダーの ID など）は、設定を読んだあとに run が伏せる
+		hideInTelemetry: func(cfg config.Config) { hideConfigInTelemetry(tel, cfg) },
 	})
 	stop()
 
-	// os.Exit は defer を実行しないので、ここで span を送り切る
+	// os.Exit は defer を実行しないので、ここで span とログを送り切る
 	if err := tel.Shutdown(); err != nil {
-		logger.Warn("トレースを送り切れませんでした", "error", err.Error())
+		logger.Warn("トレースとログを送り切れませんでした", "error", err.Error())
 	}
 
 	os.Exit(code)

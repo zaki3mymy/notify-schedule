@@ -10,6 +10,7 @@ package googlecalendar
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -25,6 +26,11 @@ import (
 
 // pageSize は、1回のリクエストで取得する予定の数（Calendar API の上限は 2500）。
 const pageSize = 250
+
+// maxConcurrentFetches は、同時に予定を取得するカレンダーの数の上限。
+// Calendar API に同時実行数の制限はない（制限は1分あたりのリクエスト数）が、
+// カレンダーが増えても一度に投げすぎないようにする。
+const maxConcurrentFetches = 5
 
 // tracerName は、このパッケージが作る span の計装の名前。
 const tracerName = "github.com/zaki3mymy/notify-schedule/internal/adapter/googlecalendar"
@@ -51,19 +57,39 @@ func New(ctx context.Context, opts ...option.ClientOption) (*Source, error) {
 // キャンセルされた予定は除く。取得に失敗したカレンダーがあっても、ほかのカレンダーは取得し、
 // 失敗したカレンダーを FetchResult.Failures で返す（error は返さない）。
 // 失敗したカレンダーがあれば、fetch_schedule の span を Error にする。
+//
+// カレンダーは並行して取得する（同時に maxConcurrentFetches まで）。予定と Failures は、
+// 取得が終わった順ではなく cals の順に並べる。
 func (s *Source) Fetch(ctx context.Context, cals []domain.Calendar, d domain.Date) (usecase.FetchResult, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "fetch_schedule",
 		trace.WithAttributes(attribute.Int("schedule.calendars", len(cals))))
 	defer span.End()
 
+	type fetched struct {
+		cal    domain.Calendar
+		events []domain.Event
+		err    error
+	}
+	results := make([]fetched, len(cals))
+	sem := make(chan struct{}, maxConcurrentFetches)
+	var wg sync.WaitGroup
+	for i, cal := range cals {
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			events, err := s.fetchCalendar(ctx, cal, d)
+			results[i] = fetched{cal: cal, events: events, err: err}
+		})
+	}
+	wg.Wait()
+
 	result := usecase.FetchResult{Schedule: domain.DailySchedule{Date: d}}
-	for _, cal := range cals {
-		events, err := s.fetchCalendar(ctx, cal, d)
-		if err != nil {
-			result.Failures = append(result.Failures, usecase.CalendarFailure{Calendar: cal, Err: err})
+	for _, r := range results {
+		if r.err != nil {
+			result.Failures = append(result.Failures, usecase.CalendarFailure{Calendar: r.cal, Err: r.err})
 			continue
 		}
-		result.Schedule.Events = append(result.Schedule.Events, events...)
+		result.Schedule.Events = append(result.Schedule.Events, r.events...)
 	}
 	span.SetAttributes(
 		attribute.Int("schedule.events", len(result.Schedule.Events)),
