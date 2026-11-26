@@ -32,9 +32,14 @@ resource "google_cloud_scheduler_job" "app" {
   schedule  = var.schedule
   time_zone = "Asia/Tokyo"
 
-  # 実行の要求が失敗したときは、再送しない（アプリの失敗の再実行は、Job の max_retries に任せる）
+  # Job の実行の要求（jobs:run）が失敗したときは、間隔を広げながら3回まで再送する（30秒・60秒・120秒）。
+  # Cloud Run の API が一時的に 503 を返し、Job が起動しないことがあるため。
+  # 再送するのは要求が失敗したときだけで、起動したあとのアプリの失敗の再実行は、Job の max_retries に任せる
   retry_config {
-    retry_count = 0
+    retry_count          = 3
+    min_backoff_duration = "30s"
+    max_backoff_duration = "120s"
+    max_doublings        = 2
   }
 
   http_target {
