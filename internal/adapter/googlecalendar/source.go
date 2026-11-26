@@ -66,6 +66,7 @@ func (s *Source) Fetch(ctx context.Context, cals []domain.Calendar, d domain.Dat
 	defer span.End()
 
 	type fetched struct {
+		cal    domain.Calendar
 		events []domain.Event
 		err    error
 	}
@@ -77,15 +78,15 @@ func (s *Source) Fetch(ctx context.Context, cals []domain.Calendar, d domain.Dat
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			events, err := s.fetchCalendar(ctx, cal, d)
-			results[i] = fetched{events: events, err: err}
+			results[i] = fetched{cal: cal, events: events, err: err}
 		})
 	}
 	wg.Wait()
 
 	result := usecase.FetchResult{Schedule: domain.DailySchedule{Date: d}}
-	for i, r := range results {
+	for _, r := range results {
 		if r.err != nil {
-			result.Failures = append(result.Failures, usecase.CalendarFailure{Calendar: cals[i], Err: r.err})
+			result.Failures = append(result.Failures, usecase.CalendarFailure{Calendar: r.cal, Err: r.err})
 			continue
 		}
 		result.Schedule.Events = append(result.Schedule.Events, r.events...)
