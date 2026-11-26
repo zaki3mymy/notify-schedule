@@ -62,7 +62,7 @@ gcloud run jobs execute notify-schedule --project=<プロジェクト ID> --regi
   --args=--dry-run,--date=2026-12-24
 ```
 
-- Scheduler は、実行の要求が失敗しても再送しない。アプリが失敗したとき（終了コード `1`）の再実行は、Job のリトライ（1回）に任せる。
+- Scheduler は、実行の要求（`jobs:run`）が失敗したとき（Cloud Run の API が一時的に 503 を返すなど）、30秒・60秒・120秒の間隔で3回まで再送する。アプリが失敗したとき（終了コード `1`）の再実行は、Job のリトライ（1回）に任せる。
 - Scheduler 用のサービスアカウント（`notify-schedule-scheduler`）は、この Job の実行（`roles/run.invoker`）しかできない。
 
 ## 手元で動かす
