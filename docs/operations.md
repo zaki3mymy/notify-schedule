@@ -68,7 +68,7 @@ span の中で出したログには `trace_id`・`span_id` が付くので、ロ
 notify-schedule        1回の実行（schedule.date・schedule.calendars・schedule.events・schedule.failed_calendars・
 │                      schedule.failed_calendar_labels・notify.messages・notify.dry_run）
 ├─ fetch_schedule      予定の取得（schedule.calendars・schedule.events・schedule.failed_calendars）
-│  └─ fetch_calendar   カレンダーごとの取得（calendar.label・calendar.events）
+│  └─ fetch_calendar   カレンダーごとの取得（calendar.label・calendar.events）。同時に5つまで並行して取得する
 │     └─ HTTP GET      Google Calendar API の呼び出し
 └─ notify              通知（notify.messages・notify.dry_run）。予定がなく通知しないときは出ない
    └─ POST /notify     nandemo-oshirase の呼び出し（この下に nandemo-oshirase の span がつく）
